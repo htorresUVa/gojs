@@ -15,24 +15,24 @@ name = "gojs_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = [] }
-tauri-plugin-opener = "2.5.4"
+tauri = { version = "2.12.0", features = [] }
+tauri-plugin-opener = "2.7.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 
 # Native Node.js runtime bridge: we spawn the bundled (or system) Node/npm as
 # child processes and stream their output back to the webview. `which` locates a
 # system Node when no bundled runtime is present (dev + graceful fallback).
-which = "8.0.5"
+which = "8.0.6"
 
 # Native llama.cpp AI backend: the desktop app downloads a prebuilt llama.cpp
 # release (`llama-server`) and a GGUF model, runs the server locally and proxies
 # chat completions to it. `reqwest` (rustls, no system OpenSSL) does the HTTP
 # downloads + talks to the local server; `zip` unpacks the release archive.
-reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Unix-only: SIGKILL a runaway run's whole process group to recover from
