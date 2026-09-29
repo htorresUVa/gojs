@@ -32,33 +32,33 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
-    "@types/node": "26.2.0",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
-    "@vitejs/plugin-react": "6.1.0",
+    "@tauri-apps/cli": "^2.12.0",
+    "@types/node": "26.6.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
     "esbuild": "0.28.2",
-    "playwright": "^1.62.1",
+    "playwright": "^1.63.0",
     "typescript": "6.0.3",
-    "vite": "8.2.2",
-    "vitest": "4.1.11"
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
   },
   "dependencies": {
-    "@mlc-ai/web-llm": "0.2.84",
+    "@mlc-ai/web-llm": "0.2.85",
     "@tailwindcss/vite": "4.3.3",
-    "@tauri-apps/api": "^2.11.1",
-    "@testing-library/dom": "10.4.1",
-    "@vitest/browser-playwright": "^4.1.11",
+    "@tauri-apps/api": "^2.12.0",
+    "@testing-library/dom": "10.4.2",
+    "@vitest/browser-playwright": "^5.0.2",
     "acorn": "8.18.0",
     "acorn-walk": "8.3.5",
     "modern-monaco": "0.4.2",
-    "prettier": "3.9.6",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "streamdown": "2.5.0",
+    "prettier": "3.9.9",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "streamdown": "2.6.0",
     "sucrase": "^3.35.1",
     "tailwindcss": "4.3.3",
-    "tm-themes": "1.12.8"
+    "tm-themes": "1.12.12"
   },
   "overrides": {
     "typescript": "6.0.3"

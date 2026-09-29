@@ -4,7 +4,7 @@
 
 import type { ModelRecord } from '@mlc-ai/web-llm'
 
-export const WEBLLM_VERSION = '0.2.84'
+export const WEBLLM_VERSION = '0.2.85'
 
 // cacheBackend por defecto de prebuiltAppConfig (la app lo sobreescribe a 'indexeddb').
 export const WEBLLM_DEFAULT_CACHE_BACKEND = "cache"
