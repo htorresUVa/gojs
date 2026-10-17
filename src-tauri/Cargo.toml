@@ -15,13 +15,13 @@ name = "gojs_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.0", features = [] }
+tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.0", features = [] }
-tauri-plugin-opener = "2.7.0"
+tauri = { version = "2.12.4", features = [] }
+tauri-plugin-opener = "2.7.2"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = "1.0.154"
 
 # Native Node.js runtime bridge: we spawn the bundled (or system) Node/npm as
 # child processes and stream their output back to the webview. `which` locates a
@@ -33,12 +33,12 @@ which = "8.0.6"
 # chat completions to it. `reqwest` (rustls, no system OpenSSL) does the HTTP
 # downloads + talks to the local server; `zip` unpacks the release archive.
 reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.4", default-features = false, features = ["deflate"] }
 
 # Unix-only: SIGKILL a runaway run's whole process group to recover from
 # infinite loops without freezing the app.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.189"
+libc = "0.2.191"
 
 # Release profile tuned for a small, fast binary. The runtime performance of a
 # Tauri app is dominated by the system webview, so here we optimise the native
