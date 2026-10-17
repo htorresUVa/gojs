@@ -6,6 +6,28 @@ export interface PreparedCode {
   nodeBuiltins: string[]
 }
 
+/**
+ * Un worker no pudo arrancar (no es un error del código del usuario). En la web
+ * suele pasar tras un deploy con la pestaña abierta: el asset con el hash viejo
+ * ya no existe y el fallback SPA devuelve index.html, que no es un módulo válido
+ * (issue #28).
+ */
+export class WorkerLoadError extends Error {
+  constructor(message = 'Code preparation worker failed to load') {
+    super(message)
+    this.name = 'WorkerLoadError'
+  }
+}
+
+/**
+ * Un `error` de worker sin mensaje es un fallo de carga (404, MIME incorrecto,
+ * módulo no soportado). Un ErrorEvent con mensaje es una excepción no capturada
+ * dentro de un worker que sí arrancó.
+ */
+export function isWorkerLoadFailure(event: Event): boolean {
+  return !(event instanceof ErrorEvent) || !event.message
+}
+
 // Worker singleton de preparación de código. A diferencia del executor (que se
 // recrea en cada ejecución para aislar callbacks), este worker es puro (sin
 // estado entre peticiones) y puede reutilizarse. Correlacionamos peticiones y
@@ -43,10 +65,14 @@ function ensureWorker(): Worker {
     }
   }
 
-  worker.onerror = () => {
+  worker.onerror = (event) => {
     // Fallo del worker: rechazamos lo pendiente y lo recreamos en la próxima
     // petición para no quedar en un estado inservible.
-    rejectAllPending(new Error('Code preparation worker error'))
+    rejectAllPending(
+      isWorkerLoadFailure(event)
+        ? new WorkerLoadError()
+        : new Error(`Code preparation worker error: ${(event as ErrorEvent).message}`),
+    )
     worker?.terminate()
     worker = null
   }

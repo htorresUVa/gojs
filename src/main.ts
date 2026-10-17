@@ -36,7 +36,7 @@ import {
   collectBareSpecifiers,
   buildImportMap,
 } from './console'
-import { prepareCode, destroyCodePrepWorker } from './code-prep'
+import { prepareCode, destroyCodePrepWorker, isWorkerLoadFailure, WorkerLoadError } from './code-prep'
 import {
   formatConsoleValueText,
   isSerializedConsoleArguments,
@@ -410,6 +410,10 @@ function unmountChatResponseRoots() {
   chatResponseRoots.clear()
 }
 const EXECUTION_TIMEOUT = 2000 // 2 segundos de timeout por defecto
+// Margen para que un executor recién creado cargue antes de empezar a contar
+// EXECUTION_TIMEOUT. Con la CPU ocupada el arranque puede pasar de 2 s y eso no
+// es un bucle infinito (issue #26).
+const WORKER_START_TIMEOUT = 10000
 // Timeout del runtime nativo de Node. Más holgado que el del navegador porque
 // el código nativo hace tareas legítimamente lentas (fetch, I/O, etc.), pero
 // acotado para que un bucle infinito no congele la app.
@@ -1608,7 +1612,7 @@ async function initEditor() {
     label: 'Ejecutar Código',
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
     run: () => {
-      runCode()
+      runCode({ force: true })
     },
   })
 
@@ -2114,7 +2118,7 @@ async function setupNativeMenu() {
         void formatEditorCode()
         break
       case 'run-code':
-        void runCode()
+        void runCode({ force: true })
         break
       case 'toggle-auto-run':
         document.getElementById('autorun-toggle-button')?.click()
@@ -2781,6 +2785,34 @@ function createLogTypeIcon(type: string, label = type): HTMLSpanElement | null {
   return icon
 }
 
+// Un worker de ejecución no pudo cargar. En la web casi siempre es una pestaña
+// abierta durante un deploy: los assets con hash viejo ya no existen y solo
+// recargando se obtienen los nuevos (issue #28).
+function showWorkerLoadNotice(outputElement: Element) {
+  const entry = document.createElement('div')
+  entry.className = 'log-entry notice'
+
+  const typeIcon = createLogTypeIcon('notice', 'Update')
+  if (typeIcon) entry.appendChild(typeIcon)
+
+  const content = document.createElement('span')
+  content.className = 'log-content'
+  content.textContent =
+    "GoJS couldn't load the code runner. This usually happens when GoJS is updated while the page is open. Reload the page to get the latest version."
+  entry.appendChild(content)
+
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'log-notice-action'
+  button.textContent = 'Reload'
+  button.addEventListener('click', () => {
+    location.reload()
+  })
+  entry.appendChild(button)
+
+  outputElement.appendChild(entry)
+}
+
 // Muestra un aviso claro cuando el código en modo JavaScript importa módulos
 // nativos de Node.js (que no existen en el sandbox del navegador). En desktop,
 // ofrece un botón para cambiar al runtime de Node.js con un solo clic.
@@ -2827,8 +2859,9 @@ async function showNodeBuiltinNotice(outputElement: Element, specifiers: string[
   outputElement.appendChild(entry)
 }
 
-// Ejecutar código
-async function runCode() {
+// Ejecutar código. `force` re-ejecuta aunque el código no haya cambiado (ejecución
+// manual): si no, tras un timeout la salida se quedaría atascada.
+async function runCode({ force = false }: { force?: boolean } = {}) {
   if (!editor) return
 
   // Marca esta ejecución. Si otra arranca durante un await, la actual se descarta.
@@ -2844,7 +2877,7 @@ async function runCode() {
   const executionSignature = `${currentSettings.autoLogExpressions ? 'expressions:on' : 'expressions:off'}\n${code}`
 
   // Verificar si el código es el mismo que se ejecutó anteriormente
-  if (executionSignature === lastExecutionSignature) {
+  if (!force && executionSignature === lastExecutionSignature) {
     return
   }
 
@@ -3005,6 +3038,35 @@ async function runCode() {
     // en la salida ya limpiada (ver issue #16).
     initExecutorWorker()
 
+    const runWorker = executorWorker!
+
+    // Detiene el executor de esta ejecución. Si otra ejecución ya tomó el relevo
+    // sin recrear el worker (p. ej. falló al preparar), lo matamos igualmente para
+    // que un bucle infinito no siga quemando CPU, pero sin tocar su salida.
+    const stopRunWorker = () => {
+      executionTimeoutId = null
+      if (executorWorker !== runWorker) return
+      runWorker.terminate()
+      executorWorker = null
+      if (runId === browserRunSeq) initExecutorWorker()
+    }
+
+    const startExecutionTimeout = () => {
+      if (EXECUTION_TIMEOUT <= 0) return
+      // Configurar timeout desde el hilo principal (esto SÍ puede detener loops síncronos)
+      executionTimeoutId = window.setTimeout(() => {
+        if (runId === browserRunSeq) {
+          addLog(
+            'error',
+            null,
+            `⏱️ Execution stopped: the code exceeded the timeout limit (${EXECUTION_TIMEOUT / 1000}s)`,
+          )
+          addLog('warn', null, 'Possible infinite loop or code that takes too long to execute')
+        }
+        stopRunWorker()
+      }, EXECUTION_TIMEOUT)
+    }
+
     // Configurar manejo de mensajes del worker. El handler descarta mensajes de
     // ejecuciones ya superadas (comparando runId) por robustez ante solapamientos.
     executorWorker!.onmessage = (e: MessageEvent) => {
@@ -3012,6 +3074,13 @@ async function runCode() {
       const message = e.data
 
       switch (message.type) {
+        case 'started':
+          // El worker ya cargó: a partir de aquí cuenta el tiempo del código.
+          if (executionTimeoutId !== null) clearTimeout(executionTimeoutId)
+          executionTimeoutId = null
+          startExecutionTimeout()
+          break
+
         case 'log':
         case 'info':
         case 'warn':
@@ -3070,43 +3139,38 @@ async function runCode() {
 
     // Manejar errores del worker
     executorWorker!.onerror = (error) => {
+      if (runId !== browserRunSeq) return
+
       // Limpiar timeout
       if (executionTimeoutId !== null) {
         clearTimeout(executionTimeoutId)
         executionTimeoutId = null
       }
 
-      addLog('error', null, `Error del worker: ${error.message}`)
+      if (isWorkerLoadFailure(error)) {
+        // El executor no llegó a cargar: recrearlo fallaría igual hasta recargar.
+        runWorker.terminate()
+        if (executorWorker === runWorker) executorWorker = null
+        lastExecutionSignature = ''
+        showWorkerLoadNotice(outputElement)
+        return
+      }
+
+      addLog('error', null, `Worker error: ${error.message}`)
       // Reiniciar el worker
       initExecutorWorker()
     }
 
-    // Configurar timeout desde el hilo principal (esto SÍ puede detener loops síncronos)
-    if (EXECUTION_TIMEOUT > 0) {
-      executionTimeoutId = window.setTimeout(() => {
-        // Una ejecución posterior ya tomó el relevo: no toques su worker/salida.
-        if (runId !== browserRunSeq) return
-
-        // Mostrar mensaje de timeout
-        addLog(
-          'error',
-          null,
-          `⏱️ Execution stopped: the code exceeded the timeout limit (${EXECUTION_TIMEOUT / 1000}s)`,
-        )
-        addLog('warn', null, 'Possible infinite loop or code that takes too long to execute')
-
-        // Terminar el worker inmediatamente (esto SÍ detiene loops síncronos)
-        if (executorWorker) {
-          executorWorker.terminate()
-          executorWorker = null
-        }
-
-        // Reiniciar el worker para la próxima ejecución
-        initExecutorWorker()
-
-        executionTimeoutId = null
-      }, EXECUTION_TIMEOUT)
-    }
+    // Hasta que el worker confirme que arrancó ('started') solo vigilamos que
+    // cargue; el límite de EXECUTION_TIMEOUT empieza a contar después.
+    executionTimeoutId = window.setTimeout(() => {
+      if (runId === browserRunSeq) {
+        lastExecutionSignature = ''
+        addLog('error', null, `⏱️ The code runner didn't start within ${WORKER_START_TIMEOUT / 1000}s`)
+        addLog('warn', null, 'Run the code again, or reload the page if it keeps happening')
+      }
+      stopRunWorker()
+    }, WORKER_START_TIMEOUT)
 
     // Enviar código al worker para su ejecución
     executorWorker!.postMessage({
@@ -3119,7 +3183,13 @@ async function runCode() {
     // Guardar el código que acabamos de ejecutar
     lastExecutionSignature = executionSignature
   } catch (error: any) {
-    addLog('error', null, `Error de sintaxis: ${error.message}`)
+    if (error instanceof WorkerLoadError) {
+      if (runId !== browserRunSeq) return
+      lastExecutionSignature = ''
+      showWorkerLoadNotice(outputElement)
+      return
+    }
+    addLog('error', null, `Syntax error: ${error.message}`)
     if (error.stack) {
       addLog('error', null, error.stack)
     }

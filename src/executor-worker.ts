@@ -23,6 +23,10 @@ interface LogMessage {
   columns?: string[]
 }
 
+interface StartedMessage {
+  type: 'started'
+}
+
 interface CompleteMessage {
   type: 'complete'
 }
@@ -230,6 +234,11 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
     timers.clear()
     counters.clear()
     timeMarks = []
+
+    // Avisar de que el worker ya cargó y empieza a ejecutar: el hilo principal
+    // mide el timeout desde aquí, no desde la creación del worker.
+    const started: StartedMessage = { type: 'started' }
+    self.postMessage(started)
 
     try {
       // Ejecutar código en un contexto aislado con console personalizado
