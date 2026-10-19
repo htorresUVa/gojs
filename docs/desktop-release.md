@@ -179,3 +179,11 @@ NODE_PLATFORM=darwin NODE_ARCH=arm64 pnpm node:fetch
 
 `NODE_PLATFORM` accepts `darwin`, `linux` or `win32`.
 `NODE_ARCH` accepts `arm64` or `x64`.
+
+## Patched dependencies
+
+`src-tauri/vendor/wry` is a copy of `wry` 0.57.0 (wired in through `[patch.crates-io]` in
+`src-tauri/Cargo.toml`) with one change in `src/wkwebview/drag_drop.rs`: `collect_paths` no
+longer `unwrap`s the drag pasteboard. Upstream panics there, which aborts the whole app when a
+file is dragged over a GoJS window (for example while dragging the app from the installer into
+Applications). Drop the patch once a `wry` release fixes it.

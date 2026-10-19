@@ -50,3 +50,8 @@ codegen-units = 1   # maximise optimisation opportunities
 panic = "abort"     # smaller binary, no unwinding machinery
 strip = true        # strip symbols from the final binary
 incremental = false
+
+# wry 0.57.0 panics (and aborts the app) in its macOS drag-enter handler when the drag
+# pasteboard lacks a well-formed filenames list. See vendor/wry/src/wkwebview/drag_drop.rs.
+[patch.crates-io]
+wry = { path = "vendor/wry" }
