@@ -142,10 +142,9 @@ pub fn run() {
                 let _ = app.opener().open_url("https://gojs.app", None::<&str>);
             }
             "report-issue" => {
-                let _ = app.opener().open_url(
-                    "https://github.com/midudev/gojs/issues/new",
-                    None::<&str>,
-                );
+                let _ = app
+                    .opener()
+                    .open_url("https://github.com/midudev/gojs/issues/new", None::<&str>);
             }
             "close-window" => {
                 if let Some(window) = app.get_webview_window("main") {
