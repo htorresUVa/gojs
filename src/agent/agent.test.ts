@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cleanEditProse,
+  cleanModelText,
+  detectAgentMode,
+  detectUserLanguage,
+  findDroppedLines,
   detectDeterministicIntent,
+  extractEditedCode,
   isEditIntent,
-  parseAction,
+  isMeaningfulAnswer,
+  isRepeatOf,
+  isSmallTalk,
+  looksLikePartialEdit,
+  removeEchoes,
   runAgent,
   stripComments,
   type AgentBridge,
@@ -11,48 +21,9 @@ import {
 } from './agent'
 import type { ChatMessage } from '../chatbot'
 
-describe('parseAction', () => {
-  it('treats plain prose (no action tag) as a final chat answer', () => {
-    const action = parseAction('This code logs 4 because x is 4.')
-    expect(action.kind).toBe('final')
-    expect(action.text).toContain('logs 4')
-  })
-
-  it('parses a write action and extracts the full code block', () => {
-    const raw = '<action>write</action>\nHere is the fix:\n```js\nconst x = 5\nconsole.log(x)\n```'
-    const action = parseAction(raw)
-    expect(action.kind).toBe('write')
-    expect(action.code).toBe('const x = 5\nconsole.log(x)')
-  })
-
-  it('parses a run action', () => {
-    expect(parseAction('<action>run</action>').kind).toBe('run')
-  })
-
-  it('parses the deterministic strip-comments and format actions', () => {
-    expect(parseAction('<action>strip-comments</action>').kind).toBe('strip-comments')
-    expect(parseAction('<action>format</action>').kind).toBe('format')
-  })
-
-  it('flags whether the <action> tag was explicit', () => {
-    expect(parseAction('<action>final</action>\nhi').tagged).toBe(true)
-    expect(parseAction('just some prose, no tag').tagged).toBe(false)
-  })
-
-  it('parses a final action and keeps the message text', () => {
-    const action = parseAction('<action>final</action>\nDone! I fixed the typo.')
-    expect(action.kind).toBe('final')
-    expect(action.text).toBe('Done! I fixed the typo.')
-  })
-
-  it('strips <think> blocks before parsing', () => {
-    const raw = '<think>let me reason...</think><action>run</action>'
-    expect(parseAction(raw).kind).toBe('run')
-  })
-})
-
-// Bridge y UI de mentira para probar el loop de forma determinista.
-function makeHarness(initialCode = '') {
+// Bridge y UI de mentira para probar el harness de forma determinista. `runErrors`
+// indica, ejecución a ejecución, si el código falla (por defecto, nunca).
+function makeHarness(initialCode = '', runErrors: boolean[] = []) {
   const state = { code: initialCode, runs: 0 }
   const events: string[] = []
 
@@ -63,9 +34,8 @@ function makeHarness(initialCode = '') {
       events.push('setCode')
     },
     run: async (): Promise<AgentRunResult> => {
+      const hasError = runErrors[state.runs] ?? false
       state.runs += 1
-      // El primer run falla, el segundo va bien: simula un ciclo de arreglo.
-      const hasError = state.runs === 1
       events.push(hasError ? 'run:error' : 'run:ok')
       return { output: hasError ? 'ERROR: x is not defined (L1)' : '5 (L2)', hasError }
     },
@@ -83,7 +53,7 @@ function makeHarness(initialCode = '') {
     },
     finalAnswer: (md) => {
       finals.push(md)
-      events.push(`final:${md.slice(0, 20)}`)
+      events.push('final')
     },
     status: () => {},
     clearStatus: () => {},
@@ -92,103 +62,393 @@ function makeHarness(initialCode = '') {
   return { state, events, finals, bridge, ui }
 }
 
-describe('runAgent loop', () => {
-  it('answers a question without touching the code (transparent mode)', async () => {
-    const { events, bridge, ui } = makeHarness('console.log(1)')
-    const generate = async () => 'It prints 1 because you log the literal 1.'
+// Modelo guionizado: devuelve las respuestas en orden y guarda los mensajes recibidos.
+function scriptedModel(replies: string[]) {
+  const calls: ChatMessage[][] = []
+  const generate = async (messages: ChatMessage[]) => {
+    calls.push(messages)
+    return replies[Math.min(calls.length - 1, replies.length - 1)]
+  }
+  return { generate, calls }
+}
+
+const LONG_FILE = Array.from({ length: 10 }, (_, i) => `const v${i} = ${i}`).join('\n')
+
+describe('detectAgentMode', () => {
+  it('answers greetings and questions, even when they mention editing', () => {
+    for (const m of [
+      'Hola',
+      '¿De qué va el código?',
+      'explain this loop',
+      'why does it print 1?',
+      '¿Cómo puedo añadir un bucle?',
+      'what does map do here?',
+    ]) {
+      expect(detectAgentMode(m), m).toBe('answer')
+    }
+  })
+
+  it('edits on imperative or polite change requests', () => {
+    for (const m of [
+      'arregla el error',
+      'fix the bug',
+      'haz que imprima hola',
+      'añade una función suma',
+      '¿Puedes añadir un bucle?',
+      'can you rename x to total?',
+      'write a fizzbuzz',
+    ]) {
+      expect(detectAgentMode(m), m).toBe('edit')
+    }
+  })
+
+  it('runs the code when asked to execute it or what it prints', () => {
+    for (const m of ['ejecútalo', 'run it', '¿Qué imprime?', 'what does it print?']) {
+      expect(detectAgentMode(m), m).toBe('run')
+    }
+  })
+})
+
+describe('detectUserLanguage', () => {
+  it('names the language explicitly for the prompt', () => {
+    expect(detectUserLanguage('haz que imprima la media')).toBe('Spanish')
+    expect(detectUserLanguage('¿Qué imprime?')).toBe('Spanish')
+    expect(detectUserLanguage('make it print the average')).toBe('English')
+  })
+})
+
+describe('cleanEditProse', () => {
+  it('drops labels copied from the instructions and keeps one sentence', () => {
+    const prose = 'Change: Added the average.\nSentence: We added the average of the numbers.'
+    expect(cleanEditProse(prose)).toBe('Added the average.')
+  })
+})
+
+describe('isSmallTalk', () => {
+  it('recognises greetings and thanks, not real questions', () => {
+    for (const m of ['Hola', '¡Hola!', 'hola gojs', 'Buenos días', 'thanks!', 'Gracias 🙏']) expect(isSmallTalk(m), m).toBe(true)
+    for (const m of ['Hola, ¿qué hace este código?', '¿De qué va el código?', 'thanks, now fix the bug']) {
+      expect(isSmallTalk(m), m).toBe(false)
+    }
+  })
+
+  it('does not send the code to the model for a greeting', async () => {
+    const { bridge, ui } = makeHarness('const secret = 42')
+    const { generate, calls } = scriptedModel(['¡Hola! ¿En qué te ayudo?'])
+
+    await runAgent('Hola', { generate, bridge, ui })
+
+    expect(calls[0].at(-1)?.content).not.toContain('const secret')
+  })
+})
+
+describe('cleanModelText', () => {
+  it('drops bare protocol words that small models emit instead of answering', () => {
+    expect(cleanModelText('final')).toBe('')
+    expect(cleanModelText('run')).toBe('')
+    expect(cleanModelText('<think>hmm</think>run')).toBe('')
+  })
+
+  it('cuts an invented next user turn (seen with a 0.5B model)', () => {
+    const raw = 'Ejemplo con map:\n```js\nnumbers.map((n) => n * 2)\n```\nUser message: ¿Y con strings?'
+    expect(cleanModelText(raw)).toBe('Ejemplo con map:\n```js\nnumbers.map((n) => n * 2)\n```')
+  })
+
+  it('keeps the real answer around leaked tags and role prefixes', () => {
+    expect(cleanModelText('<action>final</action>\n¡Hola! ¿En qué te ayudo?')).toBe('¡Hola! ¿En qué te ayudo?')
+    expect(cleanModelText('Assistant: It logs 4.')).toBe('It logs 4.')
+    expect(cleanModelText('<think>unfinished reasoning')).toBe('')
+  })
+
+  it('isMeaningfulAnswer rejects empty or punctuation-only replies', () => {
+    expect(isMeaningfulAnswer('')).toBe(false)
+    expect(isMeaningfulAnswer('```\n```')).toBe(false)
+    expect(isMeaningfulAnswer('Sí')).toBe(true)
+  })
+})
+
+describe('removeEchoes', () => {
+  it('cuts the repeated answer after a meta phrase (seen with a 0.5B model)', () => {
+    const raw =
+      'La función reduce suma los elementos.\n\nPor lo tanto, la respuesta al usuario sería:\n\nLa función reduce suma los elementos.'
+    expect(removeEchoes(raw)).toBe('La función reduce suma los elementos.')
+  })
+
+  it('drops duplicated paragraphs and keeps distinct ones', () => {
+    expect(removeEchoes('A uno.\n\nB dos.\n\nA uno.')).toBe('A uno.\n\nB dos.')
+  })
+})
+
+describe('isRepeatOf', () => {
+  const previous = 'La función reduce se utiliza para acumular los elementos de un array en una sola variable total.'
+
+  it('detects a near-copy of the previous answer', () => {
+    expect(isRepeatOf(`${previous} Así funciona.`, previous)).toBe(true)
+  })
+
+  it('accepts a different answer', () => {
+    expect(isRepeatOf('Imprime 6 porque suma uno más dos más tres usando reduce sobre numbers.', previous)).toBe(false)
+  })
+})
+
+describe('extractEditedCode', () => {
+  it('takes the longest code block (the full file) and keeps the prose apart', () => {
+    const raw = 'Change this:\n```js\nx++\n```\nFull file:\n```js\nlet x = 1\nx++\nconsole.log(x)\n```\nIncrements x.'
+    const { code, prose } = extractEditedCode(raw)
+    expect(code).toBe('let x = 1\nx++\nconsole.log(x)')
+    expect(prose).toContain('Increments x.')
+  })
+
+  it('returns null code when there is no fenced block', () => {
+    expect(extractEditedCode('I would change the loop').code).toBeNull()
+  })
+})
+
+describe('findDroppedLines', () => {
+  const code = 'const numbers = [1, 2, 3]\nconst total = numbers.reduce((a, b) => a + b, 0)\nconsole.log(total)'
+
+  it('lists existing lines lost in an additive request (seen with 0.5B and 0.8B models)', () => {
+    const proposal = 'const numbers = [1, 2, 3]\nconst max = Math.max(...numbers)\nconsole.log(max)'
+    expect(findDroppedLines(code, proposal, 'añade una función que devuelva el máximo')).toEqual([
+      'const total = numbers.reduce((a, b) => a + b, 0)',
+      'console.log(total)',
+    ])
+  })
+
+  it('does not count a line the model only modified as deleted', () => {
+    const proposal = 'const numbers = [1, 2, 3]\nconst total = numbers.reduce((a, b) => a + b, 0)\nconsole.log("Total:", total)\nconsole.log(total / 3)'
+    expect(findDroppedLines(code, proposal, 'imprime también la media')).toEqual([])
+  })
+
+  it('ignores formatting-only differences and non-additive requests', () => {
+    const reformatted = 'const numbers = [1, 2, 3];\nconst total = numbers.reduce((a, b) => a + b, 0);\nconsole.log(total);\nconsole.log(total / 3);'
+    expect(findDroppedLines(code, reformatted, 'imprime también la media')).toEqual([])
+    expect(findDroppedLines(code, 'console.log(6)', 'simplifica el código')).toEqual([])
+  })
+})
+
+describe('looksLikePartialEdit', () => {
+  it('flags a reply that drops most of the file without being asked to', () => {
+    expect(looksLikePartialEdit(LONG_FILE, 'const v0 = 42', 'change v0 to 42')).toBe(true)
+  })
+
+  it('accepts big deletions when the user asked to remove code', () => {
+    expect(looksLikePartialEdit(LONG_FILE, 'const v0 = 0', 'elimina todo menos v0')).toBe(false)
+  })
+})
+
+describe('runAgent: answers', () => {
+  it('never shows a bare "final" — retries and then says the model failed', async () => {
+    const { events, finals, bridge, ui } = makeHarness('console.log(1)')
+    const { generate, calls } = scriptedModel(['final', 'final'])
+
+    await runAgent('Hola', { generate, bridge, ui })
+
+    expect(calls).toHaveLength(2)
+    expect(finals).toHaveLength(1)
+    expect(finals[0]).not.toMatch(/^final$/i)
+    expect(finals[0]).toMatch(/couldn't produce an answer/i)
+    expect(events).not.toContain('setCode')
+  })
+
+  it('recovers when the first reply is a protocol word and the retry is a real answer', async () => {
+    const { finals, bridge, ui } = makeHarness('console.log(1)')
+    const { generate } = scriptedModel(['run', 'Imprime 1 por consola.'])
+
+    await runAgent('¿De qué va el código?', { generate, bridge, ui })
+
+    expect(finals).toEqual(['Imprime 1 por consola.'])
+  })
+
+  it('answers questions without touching the code and sends the code as context', async () => {
+    const { events, finals, bridge, ui } = makeHarness('console.log(1)')
+    const { generate, calls } = scriptedModel(['It prints 1 because you log the literal 1.'])
 
     await runAgent('why does it print 1?', { generate, bridge, ui })
 
     expect(events).not.toContain('setCode')
-    expect(events.some((e) => e.startsWith('final:'))).toBe(true)
+    expect(finals[0]).toContain('prints 1')
+    expect(calls[0].at(-1)?.content).toContain('console.log(1)')
   })
 
-  it('iterates write -> run -> fix -> run -> final until the code works', async () => {
-    const { state, events, bridge, ui } = makeHarness('cosnt x = 5\nconsole.log(x)')
+  it('does not treat words inside the selection context as an edit request', async () => {
+    const { events, bridge, ui } = makeHarness('const a = 1')
+    const { generate } = scriptedModel(['It declares a constant.'])
 
-    const scripted: string[] = [
-      '<action>write</action>\n```js\nconst x = 5\nconsole.log(x)\n```',
-      '<action>run</action>',
-      // tras el primer run (error) el agente reescribe (cambio distinto)
-      '<action>write</action>\n```js\nconst x = 5\nconsole.log(x * 1)\n```',
-      '<action>run</action>',
-      '<action>final</action>\nArreglado el typo `cosnt` -> `const`.',
-    ]
-    let turn = 0
-    const generate = async (_messages: ChatMessage[]) => scripted[turn++]
-
-    await runAgent('arregla el error', { generate, bridge, ui, maxSteps: 8 })
-
-    // Aplicó dos ediciones, ejecutó y terminó con una respuesta final.
-    expect(events.filter((e) => e === 'setCode').length).toBe(2)
-    expect(events.some((e) => e.startsWith('edit:'))).toBe(true)
-    expect(events).toContain('run:error')
-    expect(events).toContain('run:ok')
-    expect(events.some((e) => e.startsWith('final:'))).toBe(true)
-    expect(state.code).toBe('const x = 5\nconsole.log(x * 1)')
-  })
-
-  it('stops after maxSteps to avoid infinite loops', async () => {
-    const { events, bridge, ui } = makeHarness()
-    // El modelo siempre pide ejecutar, nunca termina.
-    const generate = async () => '<action>run</action>'
-
-    await runAgent('bucle', { generate, bridge, ui, maxSteps: 3 })
-
-    expect(events.filter((e) => e === 'step:run').length).toBe(3)
-    // Aún así cierra con un mensaje final (no cuelga).
-    expect(events.some((e) => e.startsWith('final:'))).toBe(true)
-  })
-
-  it('#1: does not trust a no-tag "done" on an edit request — nudges, then the agent acts', async () => {
-    const { state, events, bridge, ui } = makeHarness('const x = 1')
-    const scripted = [
-      // El modelo parlotea sin etiqueta y afirma que ya está hecho.
-      "It's already correct, nothing to change.",
-      // Tras el aviso estricto, edita de verdad.
-      '<action>write</action>\n```js\nconst x = 2\n```',
-      '<action>final</action>\nArreglado.',
-    ]
-    let turn = 0
-    const generate = async () => scripted[turn++]
-
-    await runAgent('arregla el bug del codigo', { generate, bridge, ui, maxSteps: 6 })
-
-    expect(events).toContain('setCode')
-    expect(state.code).toBe('const x = 2')
-    expect(events.some((e) => e.startsWith('final:'))).toBe(true)
-  })
-
-  it('#2: if an edit request ends with no edit at all, it says so honestly instead of faking success', async () => {
-    const { events, finals, bridge, ui } = makeHarness('const x = 1')
-    // El modelo insiste en que está hecho sin editar nunca.
-    const generate = async () => 'Done, it already works.'
-
-    await runAgent('arregla el bug del codigo', { generate, bridge, ui, maxSteps: 6 })
+    await runAgent('¿qué hace esto?', {
+      generate,
+      bridge,
+      ui,
+      context: 'The user selected this code:\n```\n// remove this later\nconst a = 1\n```',
+    })
 
     expect(events).not.toContain('setCode')
-    expect(finals.at(-1)).toMatch(/didn't change the code/i)
   })
 
-  it('fast-path: "quita los comentarios" strips them without ever calling the model', async () => {
-    const { state, events, bridge, ui } = makeHarness("// top\nconst u = 'http://x' // trailing\nconst y = 2")
-    let called = 0
-    const generate = async () => {
-      called++
-      return '<action>final</action>\nnope'
+  it('includes recent conversation history before the new message', async () => {
+    const { bridge, ui } = makeHarness('const a = 1')
+    const { generate, calls } = scriptedModel(['Es la línea que declara a.'])
+
+    await runAgent('¿y la línea 1?', {
+      generate,
+      bridge,
+      ui,
+      history: [{ user: 'Hola', assistant: '¡Hola! ¿En qué te ayudo?' }],
+    })
+
+    const roles = calls[0].map((message) => message.role)
+    expect(roles).toEqual(['system', 'user', 'assistant', 'user'])
+  })
+
+  it('runs the code first when asked what it prints and shows the real output itself', async () => {
+    const { events, finals, bridge, ui } = makeHarness('console.log(5)')
+    const { generate, calls } = scriptedModel(['Imprime 5.'])
+
+    await runAgent('¿Qué imprime?', { generate, bridge, ui })
+
+    expect(events).toContain('step:run')
+    expect(calls[0].at(-1)?.content).toContain('Console output:\n```\n5\n```')
+    expect(calls[0].at(-1)?.content).not.toContain('(L2)')
+    expect(finals[0]).toContain('```console\n5\n```')
+    expect(finals[0]).toContain('Imprime 5.')
+  })
+
+  it('still shows the output when the model cannot explain it', async () => {
+    const { finals, bridge, ui } = makeHarness('console.log(5)')
+    const { generate } = scriptedModel(['final'])
+
+    await runAgent('run it', { generate, bridge, ui })
+
+    expect(finals[0]).toContain('```console\n5\n```')
+    expect(finals[0]).not.toMatch(/final/)
+  })
+
+  it('retries without history when the model repeats its previous answer', async () => {
+    const previous = 'La función reduce se utiliza para acumular los elementos de un array en una sola variable total.'
+    const { finals, bridge, ui } = makeHarness('const a = 1')
+    const { generate, calls } = scriptedModel([previous, 'Declara la constante a con el valor uno para usarla luego en el programa.'])
+
+    await runAgent('¿y la línea 1?', { generate, bridge, ui, history: [{ user: '¿De qué va?', assistant: previous }] })
+
+    expect(calls).toHaveLength(2)
+    expect(calls[1].map((message) => message.role)).toEqual(['system', 'user'])
+    expect(finals[0]).toContain('Declara la constante')
+  })
+})
+
+describe('runAgent: edits', () => {
+  it('applies the full file, runs it and finishes with the model explanation', async () => {
+    const { state, events, finals, bridge, ui } = makeHarness('console.log(1)')
+    const { generate } = scriptedModel(['```js\nconsole.log("hola")\n```\nAhora imprime hola.'])
+
+    await runAgent('haz que imprima hola', { generate, bridge, ui })
+
+    expect(state.code).toBe('console.log("hola")')
+    expect(events).toEqual(['setCode', 'edit:+1-1', 'step:run', 'run:ok', 'update:ok', 'final'])
+    expect(finals[0]).toBe('Ahora imprime hola.')
+  })
+
+  it('asks for the edit deterministically and in the user language', async () => {
+    const { bridge, ui } = makeHarness('console.log(1)')
+    const options: unknown[] = []
+    const calls: ChatMessage[][] = []
+    const generate = async (messages: ChatMessage[], _onChunk?: unknown, opts?: unknown) => {
+      calls.push(messages)
+      options.push(opts)
+      return '```js\nconsole.log(2)\n```\nCambia el número.'
     }
+
+    await runAgent('cambia el 1 por un 2', { generate, bridge, ui })
+
+    expect(options[0]).toEqual({ temperature: 0 })
+    expect(calls[0][0].content).toContain('in Spanish')
+    expect(calls[0].map((message) => message.role)).toEqual(['system', 'user'])
+  })
+
+  it('feeds the runtime error back and applies the fix', async () => {
+    const { state, events, bridge, ui } = makeHarness('cosnt x = 5\nconsole.log(x)', [true, false])
+    const { generate, calls } = scriptedModel([
+      '```js\nconst x = 5\nconsole.log(y)\n```',
+      '```js\nconst x = 5\nconsole.log(x)\n```\nFixed the typo.',
+    ])
+
+    await runAgent('arregla el error', { generate, bridge, ui })
+
+    expect(events.filter((e) => e === 'setCode')).toHaveLength(2)
+    expect(events).toContain('run:error')
+    expect(events.at(-2)).toBe('update:ok')
+    expect(calls[1].at(-1)?.content).toContain('ERROR: x is not defined')
+    expect(state.code).toBe('const x = 5\nconsole.log(x)')
+  })
+
+  it('asks again when the reply has no code block', async () => {
+    const { state, bridge, ui } = makeHarness('const x = 1')
+    const { generate, calls } = scriptedModel(['final', '```js\nconst x = 2\n```'])
+
+    await runAgent('cambia x a 2', { generate, bridge, ui })
+
+    expect(state.code).toBe('const x = 2')
+    expect(calls[1].at(-1)?.content).toMatch(/no code block/i)
+  })
+
+  it('rejects a partial file instead of deleting the rest of the code', async () => {
+    const { state, bridge, ui } = makeHarness(LONG_FILE)
+    const complete = LONG_FILE.replace('const v0 = 0', 'const v0 = 42')
+    const { generate, calls } = scriptedModel(['```js\nconst v0 = 42\n```', `\`\`\`js\n${complete}\n\`\`\``])
+
+    await runAgent('change v0 to 42', { generate, bridge, ui })
+
+    expect(state.code).toBe(complete)
+    expect(calls[1].at(-1)?.content).toMatch(/only part of the file/i)
+  })
+
+  it('restores lines an additive edit deleted, without asking the model again', async () => {
+    const { state, bridge, ui } = makeHarness('const a = 1\nconsole.log(a)')
+    const { generate, calls } = scriptedModel(['```js\nconst b = 2\nconsole.log(b)\n```'])
+
+    await runAgent('añade una variable b y imprímela también', { generate, bridge, ui })
+
+    expect(calls).toHaveLength(1)
+    expect(state.code).toBe('const a = 1\nconsole.log(a)\nconst b = 2\nconsole.log(b)')
+  })
+
+  it('says so honestly when the model never returns usable code', async () => {
+    const { events, finals, bridge, ui } = makeHarness('const x = 1')
+    const { generate, calls } = scriptedModel(['Done, it already works.'])
+
+    await runAgent('arregla el bug del codigo', { generate, bridge, ui, maxSteps: 3 })
+
+    expect(calls).toHaveLength(3)
+    expect(events).not.toContain('setCode')
+    expect(finals.at(-1)).toMatch(/couldn't apply that change/i)
+  })
+
+  it('stops when the same error repeats and reports it', async () => {
+    const { finals, bridge, ui } = makeHarness('const x = 1', [true, true, true])
+    const { generate } = scriptedModel(['```js\nconst x = 2\nboom()\n```', '```js\nconst x = 3\nboom()\n```'])
+
+    await runAgent('arregla el error', { generate, bridge, ui })
+
+    expect(finals.at(-1)).toMatch(/still throws an error/i)
+  })
+})
+
+describe('runAgent: deterministic fast paths', () => {
+  it('"quita los comentarios" strips them without ever calling the model', async () => {
+    const { state, events, bridge, ui } = makeHarness("// top\nconst u = 'http://x' // trailing\nconst y = 2")
+    const { generate, calls } = scriptedModel(['nope'])
 
     await runAgent('quita los comentarios del codigo', { generate, bridge, ui })
 
-    expect(called).toBe(0) // el modelo no interviene
+    expect(calls).toHaveLength(0)
     expect(events).toContain('setCode')
     expect(state.code).not.toMatch(/\/\/ top|\/\/ trailing/)
     expect(state.code).toContain("'http://x'")
   })
 
-  it('fast-path: reports honestly when there are no comments to remove', async () => {
+  it('reports honestly when there are no comments to remove', async () => {
     const { events, finals, bridge, ui } = makeHarness('const x = 1')
-    const generate = async () => '<action>final</action>\nnope'
+    const { generate } = scriptedModel(['nope'])
 
     await runAgent('quita los comentarios', { generate, bridge, ui })
 
@@ -196,43 +456,24 @@ describe('runAgent loop', () => {
     expect(finals.at(-1)).toMatch(/no comments to remove/i)
   })
 
-  it('fast-path: does NOT trigger when the request mixes other work (falls through to the model)', async () => {
-    const { state, events, bridge, ui } = makeHarness('// c\nconst x = 1')
-    const scripted = ['<action>write</action>\n```js\nconst x = 1\nfunction f() {}\n```', '<action>final</action>\nHecho.']
-    let turn = 0
-    const generate = async () => scripted[turn++]
-
-    await runAgent('quita los comentarios y añade una función', { generate, bridge, ui, maxSteps: 4 })
-
-    // Pasó por el modelo (aplicó su write), no por el fast-path determinista.
-    expect(events).toContain('setCode')
-    expect(state.code).toContain('function f()')
-  })
-
-  it('#3: strip-comments verb is executed deterministically by the harness', async () => {
-    const { state, events, bridge, ui } = makeHarness("// top\nconst u = 'http://x' // trailing\nconst y = 2")
-    const scripted = ['<action>strip-comments</action>', '<action>final</action>\nHecho.']
-    let turn = 0
-    const generate = async () => scripted[turn++]
-
-    await runAgent('quita los comentarios', { generate, bridge, ui, maxSteps: 4 })
-
-    expect(events).toContain('setCode')
-    expect(state.code).not.toMatch(/\/\/ top|\/\/ trailing/)
-    // No debe romper el string que contiene "//".
-    expect(state.code).toContain("'http://x'")
-  })
-
-  it('#3: format verb runs the harness formatter', async () => {
+  it('formats with the harness formatter', async () => {
     const { state, events, bridge, ui } = makeHarness('const x = 1;;;   ')
-    const scripted = ['<action>format</action>', '<action>final</action>\nFormateado.']
-    let turn = 0
-    const generate = async () => scripted[turn++]
+    const { generate, calls } = scriptedModel(['nope'])
 
-    await runAgent('formatea el codigo', { generate, bridge, ui, maxSteps: 4 })
+    await runAgent('formatea el codigo', { generate, bridge, ui })
 
+    expect(calls).toHaveLength(0)
     expect(events).toContain('setCode')
     expect(state.code).toBe('const x = 1;')
+  })
+
+  it('falls through to the model when the request mixes other work', async () => {
+    const { state, bridge, ui } = makeHarness('// c\nconst x = 1')
+    const { generate } = scriptedModel(['```js\nconst x = 1\nfunction f() {}\n```'])
+
+    await runAgent('quita los comentarios y añade una función', { generate, bridge, ui })
+
+    expect(state.code).toContain('function f()')
   })
 })
 

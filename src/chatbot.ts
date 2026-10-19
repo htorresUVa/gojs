@@ -939,6 +939,10 @@ class Chatbot {
       temperature: options?.temperature ?? 0.3,
       max_tokens: options?.maxTokens ?? 2048,
       stream: true,
+      // Qwen 3.x razona en <think> antes de contestar: el agente no lo muestra y
+      // en modelos pequeños multiplica la espera (decenas de segundos por edición)
+      // sin mejorar el resultado.
+      ...(this.state.currentModelId?.startsWith('Qwen3') ? { extra_body: { enable_thinking: false } } : {}),
     })
 
     for await (const chunk of chunks) {

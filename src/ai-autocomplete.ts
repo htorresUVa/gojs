@@ -557,6 +557,9 @@ export function registerAiAutocomplete(options: AiAutocompleteOptions): Disposab
         }
       }
     },
+    // Monaco renombró `freeInlineCompletions` a `disposeInlineCompletions`; sin
+    // el nombre nuevo cada sugerencia descartada lanza un TypeError.
+    disposeInlineCompletions() {},
     freeInlineCompletions() {},
   }
 

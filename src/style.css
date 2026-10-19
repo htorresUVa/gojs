@@ -28,36 +28,19 @@ div[data-code-block='true'] {
   --model-selected-background: color-mix(in srgb, var(--color-accent) 15%, var(--color-bg-tertiary));
   --model-selected-border: color-mix(in srgb, var(--color-accent) 32%, transparent);
 
-  --surface-overlay-background: linear-gradient(135deg, rgba(2, 8, 13, 0.88), rgba(0, 0, 0, 0.74));
-  --surface-panel-background: linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
-    radial-gradient(circle at 70% -12%, color-mix(in srgb, var(--color-accent) 22%, transparent), transparent 32%),
-    var(--editor-background, var(--color-bg-secondary));
-  --surface-panel-shadow: 0 42px 120px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-    0 0 54px color-mix(in srgb, var(--color-accent) 10%, transparent);
-  --surface-grid-background: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
-  --surface-header-border: rgba(255, 255, 255, 0.08);
-  --surface-header-background: linear-gradient(90deg, rgba(255, 255, 255, 0.055), transparent 54%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
-  --surface-control-border: rgba(255, 255, 255, 0.1);
-  --surface-control-background: rgba(255, 255, 255, 0.05);
-  --surface-control-hover-background: rgba(255, 255, 255, 0.09);
-  --surface-sidebar-background: radial-gradient(
-      circle at 20% 12%,
-      color-mix(in srgb, var(--color-accent) 14%, transparent),
-      transparent 34%
-    ),
-    rgba(0, 0, 0, 0.18);
-  --surface-card-background: linear-gradient(135deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
-    rgba(255, 255, 255, 0.02);
-  --surface-card-active-background: linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--color-accent) 18%, transparent),
-      rgba(255, 255, 255, 0.045)
-    ),
-    rgba(255, 255, 255, 0.045);
-  --surface-content-background: radial-gradient(circle at 80% 8%, rgba(255, 255, 255, 0.045), transparent 26%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent);
+  --surface-overlay-background: rgba(0, 0, 0, 0.45);
+  --surface-panel-background: var(--color-bg-secondary);
+  --surface-panel-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  --surface-grid-background: none;
+  --surface-header-border: var(--wb-border);
+  --surface-header-background: transparent;
+  --surface-control-border: var(--wb-border-strong);
+  --surface-control-background: var(--wb-hover);
+  --surface-control-hover-background: var(--wb-active);
+  --surface-sidebar-background: transparent;
+  --surface-card-background: var(--wb-hover);
+  --surface-card-active-background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --surface-content-background: none;
   --surface-field-background: rgba(0, 0, 0, 0.22);
   --surface-field-focus-background: rgba(0, 0, 0, 0.3);
   --surface-toggle-background: rgba(0, 0, 0, 0.32);
@@ -76,44 +59,51 @@ div[data-code-block='true'] {
   --surface-control-foreground: var(--color-text-primary);
   --surface-accent-foreground: #ffffff;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Menlo', monospace, 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  /* Workbench (estilo VS Code): paneles redondeados sobre un fondo de "chrome"
+     algo más oscuro que el editor. --wb-bg se define en el CSS crítico de
+     index.html porque el primer frame ya debe pintarlo. */
+  --wb-panel-bg: var(--editor-background, var(--color-bg-primary));
+  --wb-border: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
+  --wb-border-strong: color-mix(in srgb, var(--color-text-primary) 15%, transparent);
+  --wb-hover: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  --wb-active: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+  --wb-fg-muted: var(--color-text-secondary);
+  --wb-radius: 8px;
+  --wb-gap: 6px;
+  --wb-titlebar-height: 0px;
+  --wb-activitybar-width: 44px;
+  --wb-activitybar-mobile-height: 44px;
+  --wb-tabs-height: 35px;
+  --wb-statusbar-height: 24px;
+}
+
+:root[data-theme-type='light'] {
+  --wb-border: color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+  --wb-border-strong: color-mix(in srgb, var(--color-text-primary) 26%, transparent);
+  --wb-hover: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+  --wb-active: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
 }
 
 :root[data-theme-type='light'] {
   --model-strength-color: color-mix(in oklab, var(--color-accent) 82%, black 18%);
   --model-selected-background: color-mix(in srgb, var(--color-accent) 12%, white);
   --model-selected-border: color-mix(in srgb, var(--color-accent) 26%, transparent);
-  --surface-overlay-background: linear-gradient(135deg, rgba(248, 250, 252, 0.76), rgba(255, 255, 255, 0.82));
-  --surface-panel-background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.64)),
-    radial-gradient(circle at 70% -12%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 34%),
-    var(--editor-background, var(--color-bg-secondary));
-  --surface-panel-shadow: 0 42px 120px rgba(31, 35, 40, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.7) inset,
-    0 0 54px color-mix(in srgb, var(--color-accent) 9%, transparent);
-  --surface-grid-background: linear-gradient(rgba(31, 35, 40, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(31, 35, 40, 0.025) 1px, transparent 1px);
-  --surface-header-border: rgba(31, 35, 40, 0.1);
-  --surface-header-background: linear-gradient(90deg, rgba(255, 255, 255, 0.6), transparent 54%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent);
-  --surface-control-border: rgba(31, 35, 40, 0.12);
-  --surface-control-background: rgba(255, 255, 255, 0.58);
-  --surface-control-hover-background: rgba(255, 255, 255, 0.84);
-  --surface-sidebar-background: radial-gradient(
-      circle at 20% 12%,
-      color-mix(in srgb, var(--color-accent) 10%, transparent),
-      transparent 34%
-    ),
-    color-mix(in srgb, var(--color-bg-secondary) 86%, transparent);
-  --surface-card-background: linear-gradient(135deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.34)),
-    color-mix(in srgb, var(--color-bg-primary) 74%, transparent);
-  --surface-card-active-background: linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--color-accent) 14%, transparent),
-      rgba(255, 255, 255, 0.58)
-    ),
-    rgba(255, 255, 255, 0.62);
-  --surface-content-background: radial-gradient(circle at 80% 8%, rgba(255, 255, 255, 0.5), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent);
+  --surface-overlay-background: rgba(0, 0, 0, 0.18);
+  --surface-panel-background: var(--color-bg-secondary);
+  --surface-panel-shadow: 0 16px 40px rgba(31, 35, 40, 0.16);
+  --surface-grid-background: none;
+  --surface-header-border: var(--wb-border);
+  --surface-header-background: transparent;
+  --surface-control-border: var(--wb-border-strong);
+  --surface-control-background: var(--wb-hover);
+  --surface-control-hover-background: var(--wb-active);
+  --surface-sidebar-background: transparent;
+  --surface-card-background: var(--wb-hover);
+  --surface-card-active-background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --surface-content-background: none;
   --surface-field-background: color-mix(in srgb, var(--color-bg-primary) 78%, transparent);
   --surface-field-focus-background: color-mix(in srgb, var(--color-bg-primary) 94%, transparent);
   --surface-toggle-background: color-mix(in srgb, var(--color-bg-tertiary) 86%, white);
@@ -149,7 +139,8 @@ div[data-code-block='true'] {
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background-color: var(--color-bg-primary);
+  font-size: 13px;
+  background-color: var(--wb-bg);
   color: var(--color-text-primary);
   overflow: hidden;
 }
@@ -161,88 +152,128 @@ body {
   width: 100vw;
 }
 
-/* Header */
+/* Barra de título: la web no tiene (los paneles empiezan arriba y los controles
+   viven en la barra del editor y en la activity bar). Solo se muestra en desktop,
+   como franja arrastrable bajo los semáforos de macOS, y en el demo del agente
+   del landing, cuyo marco superpone una etiqueta sobre ella. */
 .header {
-  background: color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
-  border-bottom: 1px solid var(--surface-divider-color);
-  padding: 0 12px;
-  display: flex;
-  justify-content: space-between;
+  display: none;
+  position: relative;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  height: 48px;
+  height: var(--wb-titlebar-height);
+  box-sizing: border-box;
+  padding: 0 12px;
+  background: var(--wb-bg);
+}
+
+.is-desktop .header,
+.agent-demo-embed .header {
+  display: flex;
 }
 
 .header-home-link {
+  position: absolute;
+  left: 12px;
   display: flex;
   align-items: center;
-  flex-shrink: 0;
-  margin-right: 12px;
-  border-radius: 6px;
+  border-radius: 5px;
 }
 
 .is-desktop .header-home-link {
   display: none;
 }
 
-.is-desktop .header {
-  padding-left: 78px;
+.window-title {
+  display: none;
+  color: var(--wb-fg-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.is-desktop .window-title {
+  display: block;
+}
+
+/* La altura de 48px en desktop la asume trafficLightPosition (tauri.conf.json). */
+:root.is-desktop {
+  --wb-titlebar-height: 48px;
+}
+
+:root.agent-demo-embed {
+  --wb-titlebar-height: 40px;
 }
 
 .header-logo {
-  height: 20px;
+  height: 18px;
   /* El logo es cuadrado (1024×1024). Fijar la relación de aspecto reserva el
      ancho antes de que la imagen cargue y evita el salto de layout (CLS). */
   aspect-ratio: 1 / 1;
-  width: 20px;
-  border-radius: 6px;
+  width: 18px;
+  border-radius: 5px;
   object-fit: contain;
   flex-shrink: 0;
 }
 
+/* Pestañas dentro de la barra superior del editor (editor group de VS Code). */
 .tabs-container {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  align-self: stretch;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
 }
 
+/* Las pestañas se encogen (con elipsis) antes de desbordar, para que el botón
+   de nueva pestaña siga visible; por debajo de su mínimo, la barra hace scroll. */
 .tabs-list {
+  flex: 0 1 auto;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: stretch;
 }
 
 .tab-item {
   position: relative;
-  min-width: 120px;
-  max-width: 240px;
-  height: 36px;
+  flex: 0 1 auto;
+  min-width: 88px;
+  max-width: 220px;
   box-sizing: border-box;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: color-mix(in srgb, var(--color-text-secondary) 88%, transparent);
+  border-right: 1px solid var(--wb-border);
+  color: var(--wb-fg-muted);
   cursor: pointer;
-  padding: 0 6px 0 14px;
+  padding: 0 4px 0 12px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease,
-    opacity 0.15s ease;
   white-space: nowrap;
+  transition: color 0.12s ease, background-color 0.12s ease;
+
+  /* Icono de tipo de fichero: todas las pestañas son modelos TypeScript. */
+  &::before {
+    content: 'TS';
+    flex: 0 0 auto;
+    color: #3178c6;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* Indicador de pestaña activa: línea inferior con el acento del tema. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 -1px;
+    height: 1px;
+    background: transparent;
+  }
 
   &:hover {
-    background-color: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
-    border-color: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
     color: var(--color-text-primary);
+    background-color: var(--wb-hover);
 
     .tab-close {
       visibility: visible;
@@ -256,12 +287,14 @@ body {
   }
 
   &.active {
-    background-color: var(--editor-background, var(--color-bg-primary));
-    border-color: var(--surface-divider-color);
     color: var(--color-text-primary);
+    background-color: transparent;
     cursor: default;
-    font-weight: 600;
-    box-shadow: 0 1px 2px var(--surface-soft-shadow);
+
+    &::after {
+      height: 2px;
+      background: var(--wb-active-border, var(--color-accent));
+    }
 
     .tab-close {
       visibility: visible;
@@ -270,24 +303,30 @@ body {
   }
 }
 
+:root[data-theme-type='light'] .tab-item::before {
+  color: #2f74c0;
+}
+
 .tab-name {
-  font-size: 14px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
   line-height: 1;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .tab-name-input {
-  font-size: 14px;
+  font-size: 13px;
   background: var(--surface-field-background);
   border: 1px solid var(--color-accent);
   color: var(--color-text-primary);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 4px;
   outline: none;
   font-family: var(--font-sans);
   min-width: 80px;
-  max-width: 200px;
+  max-width: 180px;
 }
 
 .tab-name-input:focus {
@@ -297,31 +336,23 @@ body {
 .tab-close {
   z-index: 1;
   flex: 0 0 auto;
-  opacity: 0.62;
   line-height: 1;
   background: transparent;
   border: none;
-  width: 24px;
-  height: 24px;
-  padding: 5px;
+  width: 20px;
+  height: 20px;
+  padding: 4px;
   cursor: pointer;
   border-radius: 4px;
   color: inherit;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+  transition: background-color 0.12s ease;
   visibility: hidden;
 
   &:hover {
-    opacity: 1;
-    background-color: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
-  }
-
-  &:active {
-    transform: scale(0.9);
+    background-color: var(--wb-active);
   }
 }
 
@@ -333,104 +364,286 @@ body {
 }
 
 .tab-add {
+  flex: 0 0 auto;
   background: transparent;
   border: none;
-  color: var(--color-text-secondary);
+  color: var(--wb-fg-muted);
   cursor: pointer;
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
+  width: 26px;
+  height: 26px;
+  margin: 0 4px;
+  border-radius: 5px;
   display: flex;
   justify-content: center;
   align-items: center;
   align-self: center;
-  padding: 7px;
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
-    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
-  position: relative;
+  padding: 6px;
+  transition: background-color 0.12s ease, color 0.12s ease;
 
   &:hover {
-    background-color: var(--surface-hover-background);
+    background-color: var(--wb-hover);
     color: var(--color-text-primary);
-  }
-
-  &:active {
-    transform: scale(0.95);
   }
 }
 
 .tab-add svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .tab-item:focus-visible,
 .tab-add:focus-visible,
 .tab-close:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: -2px;
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
 }
 
 .tabs-container::-webkit-scrollbar {
   height: 0;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .icon-button {
   background: transparent;
   border: none;
-  color: var(--color-text-secondary);
+  color: var(--wb-fg-muted);
   cursor: pointer;
-  padding: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
-    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
+  border-radius: 5px;
+  transition: background-color 0.12s ease, color 0.12s ease;
   position: relative;
 }
 
 .icon-button:hover {
-  background-color: var(--surface-hover-background);
+  background-color: var(--wb-hover);
   color: var(--color-text-primary);
 }
 
 .icon-button:active {
-  transform: scale(0.95);
+  background-color: var(--wb-active);
+}
+
+.icon-button:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
 }
 
 .icon-button svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
-/* Main Content */
+/* Workbench: paneles a la izquierda y activity bar en el borde derecho. */
+.workbench {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Main Content: los paneles son tarjetas separadas por el hueco del divisor. */
 .main-content {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   position: relative;
+  padding: var(--wb-gap) 0 0 var(--wb-gap);
+}
+
+/* Activity bar (VS Code): IA y paneles arriba; issue y ajustes abajo. El estado
+   activo se lee en el propio icono: a plena intensidad si la IA está encendida y
+   con fondo suave mientras su panel está abierto. */
+.activity-bar {
+  flex: 0 0 var(--wb-activitybar-width);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  padding: var(--wb-gap) 0 2px;
+}
+
+.activity-bar-spacer {
+  flex: 1;
+}
+
+/* Las vistas de móvil solo existen en móvil (ver la media query responsive). */
+.mobile-view-item {
+  display: none;
+}
+
+.activity-item {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
+.activity-item svg {
+  width: 22px;
+  height: 22px;
+}
+
+.activity-item[aria-pressed='true'],
+.activity-item[aria-expanded='true'] {
+  color: var(--color-text-primary);
+}
+
+.activity-item[aria-pressed='true'],
+.activity-item[aria-expanded='true'] {
+  background-color: var(--wb-active);
+}
+
+/* Barra superior del editor: pestañas y, a la derecha, acciones del editor
+   (auto-run, runtime, layout), como los botones Run/Split de VS Code. */
+.editor-titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  height: var(--wb-tabs-height);
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.editor-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px 0 4px;
+}
+
+.editor-action {
+  width: 26px;
+  height: 26px;
+}
+
+.editor-action svg {
+  width: 16px;
+  height: 16px;
 }
 
 .editor-panel,
-.output-panel {
+.output-panel,
+.chatbot-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background-color: var(--color-bg-primary);
   height: 100%;
+  box-sizing: border-box;
+  background-color: var(--wb-panel-bg);
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius);
+  overflow: hidden;
+}
+
+/* Cabecera de panel: misma altura que la barra de pestañas para que cada fila de
+   la salida siga alineada con la línea del editor que la generó. */
+.panel-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--wb-tabs-height);
+  box-sizing: border-box;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--wb-fg-muted);
+}
+
+/* Barra de estado */
+.status-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: var(--wb-statusbar-height);
+  box-sizing: border-box;
+  padding: 0 12px;
+  color: var(--wb-fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.status-item:empty {
+  display: none;
+}
+
+/* Marca de GoJS (enlace a la home) en el extremo izquierdo de la barra de estado. */
+.status-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  margin-left: -5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: inherit;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.status-brand:hover {
+  color: var(--color-text-primary);
+  background-color: var(--wb-hover);
+}
+
+.status-brand:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.status-brand img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.is-desktop .status-brand {
+  display: none;
+}
+
+/* Los embeds del landing no muestran barra de estado: el hueco inferior lo da
+   el padding del workbench. */
+html[data-embed] .status-bar {
+  display: none;
+}
+
+html[data-embed] .main-content {
+  padding-bottom: var(--wb-gap);
 }
 
 .editor-panel {
   flex: 1;
   min-width: 300px;
   position: relative;
+}
+
+/* Hasta que Monaco pinta el código coloreado (ver revealWorkbench en main.ts),
+   pestañas y editor ocupan su sitio pero no se ven. */
+html[data-workbench-pending] .tabs-container > *,
+html[data-workbench-pending] #editor > * {
+  visibility: hidden;
 }
 
 /* Columna superpuesta que muestra el tiempo de ejecución de cada línea, a la
@@ -631,6 +844,19 @@ body {
   content: 'Run your code to see the output here...';
   color: var(--color-text-secondary);
   font-style: italic;
+  animation: output-placeholder-in 120ms ease 700ms both;
+}
+
+@keyframes output-placeholder-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Mientras el workbench arranca no hay placeholder: su retraso empieza a contar
+   cuando el editor ya es visible. */
+html[data-workbench-pending] .output-content:empty::before {
+  content: none;
 }
 
 .log-entry {
@@ -976,12 +1202,14 @@ body {
   width: 100%;
 }
 
+/* Columnas a la medida del contenido; si no caben, el contenedor hace scroll
+   horizontal (con table-layout fixed se pisaban en pantallas estrechas). */
 .console-table {
   border-collapse: collapse;
   font-size: var(--editor-font-size, 14px);
-  width: 100%;
-  table-layout: fixed;
-  max-width: 100%;
+  width: auto;
+  min-width: 100%;
+  table-layout: auto;
   background-color: transparent;
   border-block: 1px solid var(--surface-border);
 }
@@ -997,8 +1225,6 @@ body {
   border-bottom: 1px solid var(--surface-border);
   color: color-mix(in srgb, #00bcd4 82%, var(--console-text-primary));
   font-size: inherit;
-  text-transform: uppercase;
-  letter-spacing: 0.35px;
   line-height: var(--editor-line-height, 22px);
   white-space: nowrap;
 }
@@ -1995,8 +2221,8 @@ body {
 }
 
 .settings-tab.active {
-  border-color: var(--color-accent);
-  background: var(--surface-active-background);
+  border-color: transparent;
+  background: var(--wb-active);
   color: var(--color-text-primary);
   box-shadow: none;
 }
@@ -2077,10 +2303,11 @@ body {
 
 .setting-item label {
   margin-bottom: 7px;
-  color: var(--color-text-secondary);
-  font-size: 12px;
+  color: var(--color-text-primary);
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .setting-item select,
@@ -2109,11 +2336,19 @@ body {
   background-color: var(--surface-field-focus-background);
 }
 
+/* Foco con el borde de acento solo cuando se llega con teclado (o se escribe):
+   abrir el panel con el ratón ya no deja un anillo de color en el primer campo. */
 .setting-item select:focus,
 .setting-item input:focus {
-  border-color: var(--color-accent);
+  outline: none;
+  border-color: var(--surface-border-strong);
   background-color: var(--surface-field-focus-background);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  box-shadow: none;
+}
+
+.setting-item select:focus-visible,
+.setting-item input:focus-visible {
+  border-color: var(--color-accent);
 }
 
 .setting-item-checkbox {
@@ -2149,14 +2384,14 @@ body {
 }
 
 .setting-item-checkbox input[type='checkbox']:checked {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--color-accent) 72%, var(--color-bg-secondary));
   box-shadow: none;
 }
 
 .setting-item-checkbox input[type='checkbox']:checked::before {
   transform: translate(18px, -50%);
-  background: white;
+  background: #ffffff;
 }
 
 .setting-status {
@@ -2249,6 +2484,52 @@ body {
     display: none;
   }
 
+  /* En móvil la activity bar pasa a ser una barra inferior, al alcance del
+     pulgar, y ocupa el sitio de la barra de estado. */
+  .workbench {
+    flex-direction: column;
+  }
+
+  .main-content {
+    padding: var(--wb-gap) var(--wb-gap) 0;
+  }
+
+  .activity-bar {
+    flex: 0 0 var(--wb-activitybar-mobile-height);
+    flex-direction: row;
+    justify-content: space-evenly;
+    padding: 0 var(--wb-gap);
+  }
+
+  .activity-bar-spacer {
+    display: none;
+  }
+
+  /* Barra inferior: vistas (código, salida, chat) y después IA, historial y
+     ajustes. Reportar un issue queda fuera para no apretar la barra. */
+  .mobile-view-item:not([hidden]) {
+    display: flex;
+  }
+
+  #issue-button {
+    display: none;
+  }
+
+  /* En la barra inferior el fondo marca la vista o el panel abierto; que la IA
+     esté encendida ya lo dice su icono. */
+  #ai-toggle-button[aria-pressed='true'] {
+    background-color: transparent;
+  }
+
+  /* Con una sola vista visible no hay hueco entre paneles que mantener. */
+  html:not([data-embed]) .main-content {
+    padding-bottom: var(--wb-gap);
+  }
+
+  .status-bar {
+    display: none;
+  }
+
   .main-content {
     flex-direction: column;
   }
@@ -2272,11 +2553,6 @@ body {
   .divider:active::before {
     width: 100%;
     height: 3px;
-  }
-
-  .output-panel {
-    border-left: none;
-    border-top: 1px solid var(--surface-divider-color);
   }
 
   .chatbot-panel {
@@ -2350,13 +2626,6 @@ resize-panels[data-orientation='vertical'] > .chatbot-panel {
   max-width: none;
 }
 
-.chatbot-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 8px 12px 0;
-  min-height: 0;
-}
 
 .chatbot-title {
   display: flex;
@@ -2465,18 +2734,17 @@ resize-panels[data-orientation='vertical'] > .chatbot-panel {
   white-space: pre-wrap;
 }
 
-/* Mensaje del usuario: caja con borde a todo el ancho (estilo Cursor) */
+/* Mensaje del usuario: bloque con fondo suave, sin borde (como el chat de VS Code). */
 .chatbot-message.user .chatbot-message-content {
-  background-color: color-mix(in srgb, var(--surface-active-background) 55%, transparent);
-  border: 1px solid var(--surface-border-strong);
-  border-radius: 12px;
-  padding: 12px 14px;
-  font-size: 14px;
+  background-color: var(--wb-hover);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
   color: var(--color-text-primary);
 }
 
 .chatbot-message.assistant .chatbot-message-content {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 /* En la conversación no mostramos etiqueta de rol (look limpio tipo Cursor). */
@@ -2484,14 +2752,53 @@ resize-panels[data-orientation='vertical'] > .chatbot-panel {
   display: none;
 }
 
-/* Estado vacío: el composer se coloca arriba del todo; con mensajes, abajo. */
-.chatbot-panel.is-empty .chatbot-messages {
-  order: 2;
-  flex: 1;
+
+/* Estado vacío (como el chat de VS Code): el composer sigue abajo, como en una
+   conversación, y encima una línea de ayuda con sugerencias que corresponden a
+   los modos del agente (responder, ejecutar, editar). */
+.chatbot-suggestions {
+  display: none;
 }
 
-.chatbot-panel.is-empty .chatbot-composer {
-  order: 1;
+.chatbot-panel.is-empty .chatbot-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px;
+}
+
+.chatbot-suggestions-hint {
+  flex-basis: 100%;
+  margin: 0 0 2px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.chatbot-suggestion {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--wb-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.chatbot-suggestion:hover {
+  background: var(--wb-hover);
+}
+
+.chatbot-suggestion:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.agent-demo-embed .chatbot-suggestions {
+  display: none !important;
 }
 
 /* Cola editable de instrucciones pendientes */
@@ -2689,6 +2996,8 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 }
 
 /* Metadatos bajo la respuesta del asistente (timestamp + copiar) */
+/* Hora y copiar solo al pasar el ratón (o con foco): repetidos bajo cada mensaje
+   eran ruido. Con opacidad, para que el hueco no cambie y nada salte. */
 .chatbot-message-meta {
   display: flex;
   align-items: center;
@@ -2696,6 +3005,19 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   margin-top: 2px;
   color: var(--color-text-secondary);
   font-size: 11.5px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.chatbot-message:hover .chatbot-message-meta,
+.chatbot-message:focus-within .chatbot-message-meta {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chatbot-message-meta {
+    opacity: 1;
+  }
 }
 
 .chatbot-message-meta button {
@@ -2720,127 +3042,73 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 }
 
 .ai-inline-code {
-  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  border-radius: 4px;
+  background: var(--wb-hover);
   color: var(--color-text-primary);
-  padding: 1px 5px;
+  padding: 1px 4px;
   font-family: var(--font-mono);
   font-size: 0.92em;
   white-space: break-spaces;
 }
 
+/* Bloque de código en las respuestas: misma superficie que los paneles del
+   workbench (borde fino, sin brillos), con el lenguaje y un botón de copiar. */
 .ai-code-block {
-  position: relative;
-  isolation: isolate;
-  margin: 12px 0 14px;
+  margin: 10px 0 12px;
   overflow: hidden;
-  border: 1px solid var(--surface-border-strong);
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-text-primary) 7%, transparent), transparent 44px),
-    var(--editor-background, var(--color-bg-secondary));
-  box-shadow:
-    0 16px 38px color-mix(in srgb, #000 24%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--color-text-primary) 5%, transparent) inset;
+  border: 1px solid var(--wb-border-strong);
+  border-radius: 6px;
+  background: var(--wb-panel-bg);
   white-space: normal;
 }
 
-.ai-code-block::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  z-index: 1;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--color-accent) 58%, transparent),
-    transparent
-  );
-  pointer-events: none;
-}
-
 .ai-code-block-header {
-  position: relative;
-  z-index: 2;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  min-height: 36px;
-  padding: 7px 9px 7px 12px;
-  border-bottom: 1px solid var(--surface-border);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 42%),
-    color-mix(in srgb, var(--editor-background, var(--color-bg-secondary)) 82%, transparent);
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--wb-border);
   color: var(--color-text-secondary);
   font-family: var(--font-sans);
   white-space: nowrap;
 }
 
-.ai-code-block-language,
-.ai-code-block-readonly {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  border-radius: 999px;
-  line-height: 1;
-}
-
 .ai-code-block-language {
-  color: var(--color-text-primary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.ai-code-block-readonly {
-  border: 1px solid color-mix(in srgb, var(--color-text-secondary) 22%, transparent);
-  padding: 0 7px;
-  color: var(--color-text-secondary);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .ai-code-block-copy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
-  min-height: 26px;
-  margin-left: auto;
-  border: 1px solid var(--surface-border);
-  border-radius: 7px;
-  background: var(--surface-control-background);
-  color: var(--color-text-primary);
-  padding: 0 9px;
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 650;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    transform 0.18s ease;
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .ai-code-block-copy:hover {
-  border-color: color-mix(in srgb, var(--color-accent) 58%, var(--surface-border));
-  background: var(--surface-control-hover-background);
-  color: var(--color-accent);
+  background: var(--wb-hover);
+  color: var(--color-text-primary);
 }
 
-.ai-code-block-copy:active {
-  transform: translateY(1px);
+.ai-code-block-copy.copied {
+  color: var(--color-success);
 }
 
 .ai-code-block-copy:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
 }
 
 /* Bloque de código estático (resaltado con monaco.editor.colorize, sin editor). */
@@ -2848,9 +3116,9 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   max-height: 420px;
   margin: 0;
   overflow: auto;
-  background: var(--editor-background, var(--color-bg-secondary));
+  background: transparent;
   color: var(--color-text-primary);
-  padding: 13px 16px;
+  padding: 10px 12px;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: var(--editor-line-height, 1.6);
@@ -3086,20 +3354,18 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 .chatbot-composer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 12px 16px;
-  padding: 12px 16px 10px;
+  gap: 6px;
+  margin: 10px;
+  padding: 10px 10px 8px 12px;
   background-color: var(--surface-field-background);
-  border: 1px solid var(--surface-border-strong);
-  border-radius: 16px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+  border: 1px solid var(--wb-border-strong);
+  border-radius: 10px;
+  transition: border-color 0.12s ease;
 }
 
+/* Foco como en el chat de VS Code: el borde toma el color de acento, sin halo. */
 .chatbot-composer:focus-within {
-  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--surface-border-strong));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: var(--color-accent);
 }
 
 /* Chip de contexto (selección del editor) dentro del composer */
@@ -3193,7 +3459,7 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   border: none;
   color: var(--color-text-primary);
   padding: 2px 0;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   font-family: var(--font-sans);
   resize: none;
@@ -3237,8 +3503,13 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   gap: 8px;
 }
 
-/* Selector de modelo (abajo a la izquierda del composer) */
+/* Selector de modelo (abajo a la izquierda del composer). El menú se ancla al
+   composer entero, no al botón, para abrirse alineado y a su mismo ancho. */
 .chatbot-model-selector {
+  position: static;
+}
+
+.chatbot-composer {
   position: relative;
 }
 
@@ -3246,42 +3517,55 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: transparent;
-  border: none;
+  height: 24px;
   margin-left: -6px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--wb-fg-muted);
+  font-size: 12px;
   font-family: var(--font-sans);
   cursor: pointer;
   transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
-.chatbot-model-trigger:hover {
-  background-color: var(--surface-hover-background);
+.chatbot-model-trigger:hover,
+.chatbot-model-trigger[aria-expanded='true'] {
+  background-color: var(--wb-hover);
   color: var(--color-text-primary);
 }
 
-.chatbot-model-chevron {
-  opacity: 0.7;
+.chatbot-model-trigger:focus {
+  outline: none;
 }
 
+.chatbot-model-trigger:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.chatbot-model-chevron {
+  opacity: 0.8;
+}
+
+/* Menú de modelos con el aspecto de un quick pick de VS Code: filas compactas,
+   check en la elegida y secciones por familia de modelo. */
 .chatbot-model-menu {
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 0;
-  min-width: 260px;
-  max-width: 320px;
-  max-height: 280px;
+  left: -1px;
+  right: -1px;
+  max-height: 360px;
   overflow-y: auto;
+  box-sizing: border-box;
   padding: 4px;
   background-color: var(--color-bg-secondary);
-  border: 1px solid var(--surface-border-strong);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px var(--surface-soft-shadow);
+  border: 1px solid var(--wb-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--surface-panel-shadow);
   z-index: 20;
 }
 
@@ -3301,153 +3585,145 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   color: var(--color-error);
 }
 
-/* Con el composer arriba (estado vacío) el menú se abre hacia abajo para no cortarse */
-.chatbot-panel.is-empty .chatbot-model-menu {
-  top: calc(100% + 6px);
-  bottom: auto;
-}
 
 .chatbot-model-option {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 7px 9px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
   border: none;
+  border-radius: 5px;
   background: transparent;
-  border-radius: 7px;
-  text-align: left;
-  cursor: pointer;
   color: var(--color-text-primary);
   font-family: var(--font-sans);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .chatbot-model-option:hover {
-  background-color: var(--surface-hover-background);
+  background-color: var(--wb-hover);
+}
+
+.chatbot-model-option:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.chatbot-model-check {
+  display: inline-flex;
+  flex: 0 0 14px;
+  color: var(--color-accent);
+  visibility: hidden;
+}
+
+.chatbot-model-option.selected .chatbot-model-check {
+  visibility: visible;
 }
 
 .chatbot-model-option-name {
-  font-size: 13px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  font-weight: 500;
 }
 
 .chatbot-model-option-meta {
-  font-size: 11px;
+  overflow: hidden;
   color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-/* --- Selector nativo (escritorio): solo tamaño + nivel de inteligencia --- */
-.chatbot-model-menu:is(.chatbot-model-menu--native, .chatbot-model-menu--visual) {
-  min-width: 268px;
-}
-
-.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) {
-  flex-direction: row;
-  align-items: center;
-  gap: 11px;
-  padding: 9px 11px;
-}
-
-.chatbot-model-option--visual {
+/* Cabecera de sección: familia de modelos y para qué sirve. El padding izquierdo
+   alinea el título con los nombres (tras el hueco del check). */
+.chatbot-model-group {
+  display: flex;
   align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px 4px 30px;
+  border-top: 1px solid var(--wb-border);
 }
 
-.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual).selected {
-  background-color: var(--model-selected-background);
-  box-shadow: inset 0 0 0 1px var(--model-selected-border);
+.chatbot-model-group-title {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chatbot-model-group-hint {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* Nombre del nivel: la etiqueta principal, nunca el nombre técnico del modelo. */
 .chatbot-model-tier {
-  font-size: 13.5px;
-  font-weight: 600;
   color: var(--color-text-primary);
-}
-
-/* En el desplegable damos ancho fijo al nombre para que los puntos alineen */
-.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) .chatbot-model-tier {
-  min-width: 68px;
-}
-
-/* Lo que ocupa el modelo en disco: secundario, junto a la puntuación */
-.chatbot-model-size {
-  font-size: 12px;
   font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.2px;
-  color: var(--color-text-secondary);
 }
 
-/* En el desplegable el tamaño se alinea a la derecha */
-.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) .chatbot-model-size {
+.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) .chatbot-model-tier {
+  min-width: 64px;
+}
+
+/* Memoria que necesita el modelo, alineada a la derecha. */
+.chatbot-model-size {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chatbot-model-option .chatbot-model-size {
   margin-left: auto;
 }
 
-/* …salvo cuando está el indicador de descargado, que queda pegado al tamaño */
-.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual)
-  .chatbot-model-size
-  + .chatbot-model-downloaded {
-  margin-left: -5px;
+/* Familia "Code" en el selector, para distinguirla del modelo de chat del mismo nivel. */
+.chatbot-model-kind {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--wb-hover);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
 }
 
-/* Medidor de inteligencia: tres puntos que se rellenan según capacidad */
+/* Medidor de capacidad: barras ascendentes; las activas con el acento. */
 .chatbot-iq {
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
 }
 
 .chatbot-iq-dot {
-  width: 7px;
+  width: 3px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--wb-border-strong);
+}
+
+.chatbot-iq-dot:nth-child(2) {
   height: 7px;
-  border-radius: 50%;
-  background: var(--surface-border-strong);
-  transition: background-color 0.15s ease;
+}
+
+.chatbot-iq-dot:nth-child(3) {
+  height: 10px;
+}
+
+.chatbot-iq-dot:nth-child(4) {
+  height: 12px;
 }
 
 .chatbot-iq-dot.on {
-  background: var(--model-strength-color);
+  background: var(--color-accent);
 }
 
-/* En web el razonamiento se lee como una pequeña señal ascendente de cuatro niveles. */
-.chatbot-model-option--visual .chatbot-iq,
-.chatbot-model-label--visual .chatbot-iq {
-  height: 12px;
-  align-items: flex-end;
-  gap: 3px;
-}
-
-.chatbot-model-option--visual .chatbot-iq-dot,
-.chatbot-model-label--visual .chatbot-iq-dot {
-  width: 4px;
-  height: 5px;
-  border-radius: 2px;
-}
-
-.chatbot-model-option--visual .chatbot-iq-dot:nth-child(2),
-.chatbot-model-label--visual .chatbot-iq-dot:nth-child(2) {
-  height: 7px;
-}
-
-.chatbot-model-option--visual .chatbot-iq-dot:nth-child(3),
-.chatbot-model-label--visual .chatbot-iq-dot:nth-child(3) {
-  height: 9px;
-}
-
-.chatbot-model-option--visual .chatbot-iq-dot:nth-child(4),
-.chatbot-model-label--visual .chatbot-iq-dot:nth-child(4) {
-  height: 12px;
-}
-
-.chatbot-model-option--visual .chatbot-iq-dot.on,
-.chatbot-model-label--visual .chatbot-iq-dot.on {
-  box-shadow: 0 0 7px color-mix(in srgb, var(--model-strength-color) 38%, transparent);
-}
-
-/* Marca de "ya descargado", visible junto al tamaño del modelo */
+/* Marca de "ya descargado", junto al tamaño. */
 .chatbot-model-downloaded {
   display: inline-flex;
   flex: 0 0 auto;
@@ -3455,7 +3731,7 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   justify-content: center;
   width: 14px;
   height: 14px;
-  color: var(--color-accent);
+  color: var(--color-text-secondary);
 }
 
 .chatbot-model-downloaded svg {
@@ -3463,97 +3739,68 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 }
 
 /* La misma representación compacta en el disparador del composer */
-.chatbot-model-label--native {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
+.chatbot-model-label--native,
 .chatbot-model-label--visual {
   display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
+  align-items: center;
+  gap: 6px;
 }
 
 .chatbot-model-label--visual .chatbot-model-tier,
+.chatbot-model-label--native .chatbot-model-tier {
+  color: inherit;
+}
+
+/* En el selector basta con familia + nivel; medidor y tamaño están en el menú. */
+.chatbot-model-label--visual .chatbot-iq,
 .chatbot-model-label--visual .chatbot-model-size {
-  font-size: 12.5px;
+  display: none;
 }
 
-.chatbot-model-option--automatic {
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 11px;
-}
-
-.chatbot-model-option--automatic.selected {
-  background-color: var(--model-selected-background);
-  box-shadow: inset 0 0 0 1px var(--model-selected-border);
-}
-
-.chatbot-model-option-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.chatbot-model-divider {
-  height: 1px;
-  margin: 4px 7px;
-  background: var(--surface-divider-color);
-}
-
-.chatbot-model-label--native .chatbot-model-size {
-  font-size: 12.5px;
-  min-width: 0;
-}
-
-.chatbot-model-label--native .chatbot-iq-dot {
-  width: 6px;
-  height: 6px;
-}
-
-/* Botón de enviar circular con el icono de flecha */
+/* Botón de enviar: acento con el texto legible que calcula main.ts; sin texto
+   que enviar queda como icono apagado, sin bloque de color. */
 .chatbot-send-btn {
-  background: var(--color-accent);
-  border: none;
-  color: var(--surface-accent-foreground);
-  cursor: pointer;
-  width: 32px;
-  height: 32px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-accent);
+  color: var(--surface-accent-foreground);
+  cursor: pointer;
   transition:
-    background-color 0.2s ease,
-    transform 0.1s ease,
-    opacity 0.2s ease;
-  flex-shrink: 0;
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.chatbot-send-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .chatbot-send-btn:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-  transform: scale(1.06);
+  background: color-mix(in srgb, var(--color-accent) 85%, var(--color-text-primary));
 }
 
-.chatbot-send-btn:active:not(:disabled) {
-  transform: scale(0.94);
+.chatbot-send-btn:focus-visible {
+  outline: 1px solid var(--color-text-primary);
+  outline-offset: 1px;
 }
 
 .chatbot-send-btn:disabled {
-  opacity: 0.35;
+  background: transparent;
+  color: var(--wb-fg-muted);
   cursor: not-allowed;
 }
 
 /* Tarjetas del agente (edición con diff / ejecución) */
 .agent-card {
-  background-color: color-mix(in srgb, var(--color-bg-secondary) 86%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-text-secondary) 24%, var(--surface-border));
-  border-radius: 12px;
+  background-color: var(--wb-panel-bg);
+  border: 1px solid var(--wb-border-strong);
+  border-radius: 6px;
   overflow: hidden;
   animation: agent-step-in 160ms ease;
 }
@@ -3576,9 +3823,9 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 46px;
-  padding: 10px 14px;
-  font-size: 14px;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
   font-family: var(--font-sans);
   color: var(--color-text-primary);
   background: transparent;
@@ -4010,13 +4257,13 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 .history-body {
   display: block;
   overflow-y: auto;
-  padding: 22px 28px 26px;
+  padding: 12px 14px 16px;
 }
 
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .history-empty {
@@ -4028,23 +4275,22 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   line-height: 1.6;
 }
 
+/* Tarjetas planas como las del agente; la versión actual solo se distingue por
+   su etiqueta "Current", sin tinte de color. */
 .history-item {
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--surface-control-background);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+  background: var(--wb-panel-bg);
   overflow: hidden;
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease;
+  transition: border-color 0.12s ease;
 }
 
 .history-item:hover {
-  border-color: color-mix(in srgb, var(--color-accent) 34%, var(--color-border));
+  border-color: var(--wb-border-strong);
 }
 
 .history-item.is-current {
-  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: var(--wb-border-strong);
 }
 
 /* Cabecera compacta y clicable (estilo tarjeta del agente). */
@@ -4053,8 +4299,8 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 44px;
-  padding: 10px 14px;
+  min-height: 36px;
+  padding: 6px 10px 6px 12px;
   font-family: var(--font-sans);
   font-size: 13px;
   color: var(--color-text-primary);
@@ -4065,7 +4311,7 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 }
 
 .history-item-head:hover {
-  background-color: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  background-color: var(--wb-hover);
 }
 
 .history-item.is-unchanged .history-item-head {
@@ -4078,24 +4324,19 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 
 .history-badge {
   flex: 0 0 auto;
-  padding: 2px 9px;
-  border-radius: 999px;
+  padding: 1px 6px;
+  border-radius: 4px;
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 600;
+  text-transform: capitalize;
   color: var(--color-text-primary);
   background: color-mix(in srgb, var(--color-text-secondary) 22%, transparent);
 }
 
-.history-badge-manual {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-}
-
+.history-badge-manual,
 .history-badge-run {
-  color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-text-secondary);
+  background: var(--wb-hover);
 }
 
 .history-time {
@@ -4133,11 +4374,11 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 }
 
 .history-current-tag {
-  color: var(--color-accent);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-weight: 600;
+  text-transform: capitalize;
 }
 
 .history-item-chevron {
@@ -4162,10 +4403,8 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 .history-diff-direction {
   padding: 8px 14px 4px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 /* El cuerpo del diff reutiliza `.agent-card-diff`; solo ajustamos el borde
@@ -4177,33 +4416,33 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 
 .history-item-actions {
   display: flex;
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: 2px;
+  padding: 4px 8px 6px;
 }
 
+/* Mismos botones de icono que el resto del workbench. */
 .history-item-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  border: 1px solid var(--surface-control-border);
+  border: none;
+  border-radius: 5px;
   background: transparent;
-  color: var(--color-text-primary);
-  border-radius: 10px;
-  font-size: 12.5px;
+  color: var(--wb-fg-muted);
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    opacity 0.2s ease;
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .history-item-btn:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
-  background-color: var(--surface-control-hover-background);
+  background-color: var(--wb-hover);
+  color: var(--color-text-primary);
 }
 
 .history-item-btn:disabled {
@@ -4212,13 +4451,12 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 }
 
 .history-item-btn-danger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-error) 55%, var(--color-border));
   color: var(--color-error);
 }
 
 .history-item-btn:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
 }
 
 /* ─── Selección de texto en la app de escritorio (Tauri/WKWebView) ─────────
@@ -4251,26 +4489,46 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   display: none !important;
 }
 
-.showcase-embed .header {
-  min-height: 40px;
-  height: 40px;
+/* Cursor de "midudev" que escribe en la demo del landing. */
+.showcase-cursor {
+  position: relative;
+  width: 2px;
+  background: #f7df1e;
+  pointer-events: none;
+  animation: showcase-cursor-blink 1s steps(1) infinite;
 }
 
-.showcase-embed .header-home-link {
-  margin-inline: 2px 8px;
+.showcase-cursor.is-typing {
+  animation: none;
 }
 
-.showcase-embed .main-content {
-  height: calc(100vh - 40px);
+.showcase-cursor-label {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  padding: 2px 6px;
+  border-radius: 3px 3px 3px 0;
+  background: #f7df1e;
+  color: #111219;
+  font: 700 10px/1.4 Menlo, 'DejaVu Mono', monospace;
+  white-space: nowrap;
 }
 
-.showcase-embed .tabs-container {
-  min-width: 0;
+@keyframes showcase-cursor-blink {
+  50% {
+    background: transparent;
+  }
 }
 
-.showcase-embed .header-actions {
-  width: auto;
-  padding-right: 4px;
+/* Showcase y demo del agente no tienen controles de paneles: sin activity bar. */
+.showcase-embed .activity-bar,
+.agent-demo-embed .activity-bar {
+  display: none;
+}
+
+.showcase-embed .main-content,
+.agent-demo-embed .main-content {
+  padding-right: var(--wb-gap);
 }
 
 /* Landing agent demo: this is the real editor and chat UI, with network/model
@@ -4290,13 +4548,8 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   display: none !important;
 }
 
-.agent-demo-embed .header {
-  min-height: 40px;
-  height: 40px;
-}
-
 .agent-demo-embed .main-content {
-  height: calc(100vh - 40px);
+  padding-top: 0;
 }
 
 .agent-demo-embed .editor-panel {
@@ -4306,11 +4559,6 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 .agent-demo-embed .chatbot-panel {
   min-width: 260px;
   max-width: none;
-}
-
-.agent-demo-embed .chatbot-panel.is-empty .chatbot-messages,
-.agent-demo-embed .chatbot-panel.is-empty .chatbot-composer {
-  order: initial;
 }
 
 .agent-demo-embed .chatbot-messages {
@@ -4336,25 +4584,43 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   font-size: 10px;
 }
 
-/* Editor-integrated side panels */
+/* Paneles laterales: tarjetas flotantes dentro del workbench, entre la barra de
+   título y la de estado, como los paneles de VS Code. */
 .editor-side-panel {
   position: fixed;
-  inset: 0 0 0 auto;
+  top: calc(var(--wb-titlebar-height) + var(--wb-gap));
+  right: var(--wb-activitybar-width);
+  bottom: var(--wb-statusbar-height);
+  left: auto;
   z-index: 1000;
   display: flex;
-  height: 100vh;
-  height: 100dvh;
-  border-left: 1px solid var(--surface-border-strong);
+  box-sizing: border-box;
+  border: 1px solid var(--wb-border-strong);
+  border-radius: var(--wb-radius);
+  overflow: hidden;
   background: var(--color-bg-secondary);
-  box-shadow: -18px 0 48px var(--surface-focus-shadow);
+  box-shadow: var(--surface-panel-shadow);
 }
 
-.editor-side-panel.settings-side-panel {
-  width: min(760px, 100vw);
+html[data-embed] .editor-side-panel {
+  bottom: var(--wb-gap);
 }
 
+/* Mismo ancho para todos los paneles laterales: abrir uno u otro no cambia el borde. */
+.editor-side-panel.settings-side-panel,
 .editor-side-panel.history-side-panel {
-  width: min(640px, 100vw);
+  width: min(720px, calc(100vw - var(--wb-activitybar-width) - var(--wb-gap)));
+}
+
+/* Móvil: a todo el ancho y por encima de la activity bar inferior. */
+@media (max-width: 767.98px) {
+  .editor-side-panel.settings-side-panel,
+  .editor-side-panel.history-side-panel {
+    left: var(--wb-gap);
+    right: var(--wb-gap);
+    bottom: var(--wb-activitybar-mobile-height);
+    width: auto;
+  }
 }
 
 .editor-side-panel.is-open {
@@ -4373,12 +4639,13 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 .editor-side-panel .modal-header {
   flex: 0 0 auto;
   box-sizing: border-box;
-  height: 48px;
-  min-height: 48px;
-  padding: 0 12px;
+  height: var(--wb-tabs-height);
+  min-height: var(--wb-tabs-height);
+  padding: 0 6px 0 14px;
   align-items: center;
   gap: 12px;
-  background: color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
+  border-bottom: 1px solid var(--wb-border);
+  background: transparent;
 }
 
 .editor-side-panel .modal-header > div:first-child {
@@ -4390,7 +4657,7 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 
 .editor-side-panel .modal-header h2 {
   flex: 0 0 auto;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -4410,17 +4677,25 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 
 .editor-side-panel .history-btn {
   justify-content: center;
-  width: 32px;
-  min-height: 32px;
+  width: 26px;
+  min-height: 26px;
   padding: 0;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   font-size: 12px;
 }
 
 .editor-side-panel .close-button {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+}
+
+.editor-side-panel .close-button::before,
+.editor-side-panel .close-button::after {
+  width: 13px;
+  height: 1.5px;
 }
 
 .editor-side-panel .modal-body {
@@ -4429,8 +4704,8 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 
 @keyframes editorSidePanelIn {
   from {
-    opacity: 0.65;
-    transform: translateX(100%);
+    opacity: 0;
+    transform: translateX(12px);
   }
   to {
     opacity: 1;

@@ -59,11 +59,20 @@ function getLanguage(className?: string): string {
   return aliases[language] ?? language
 }
 
+const LANGUAGE_LABELS: Record<string, string> = {
+  plaintext: 'Text',
+  console: 'Console',
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  shell: 'Shell',
+  html: 'HTML',
+  css: 'CSS',
+  json: 'JSON',
+  markdown: 'Markdown',
+}
+
 function getLanguageLabel(language: string): string {
-  if (language === 'plaintext') return 'text'
-  if (language === 'javascript') return 'javascript'
-  if (language === 'typescript') return 'typescript'
-  return language
+  return LANGUAGE_LABELS[language] ?? language.charAt(0).toUpperCase() + language.slice(1)
 }
 
 function MonacoCodeBlock({ children, className, monaco, theme, fontFamily, fontSize, lineHeight }: MonacoCodeBlockProps) {
@@ -138,15 +147,29 @@ function MonacoCodeBlock({ children, className, monaco, theme, fontFamily, fontS
     <figure className="ai-code-block" data-language={languageLabel}>
       <figcaption className="ai-code-block-header">
         <span className="ai-code-block-language">{languageLabel}</span>
-        <span className="ai-code-block-readonly">solo lectura</span>
-        <button className="ai-code-block-copy" type="button" onClick={copyCode} aria-label="Copiar código">
-          {copied ? 'Copiado' : 'Copiar'}
+        <button
+          className={`ai-code-block-copy${copied ? ' copied' : ''}`}
+          type="button"
+          onClick={copyCode}
+          aria-label={copied ? 'Copied' : 'Copy code'}
+          title={copied ? 'Copied' : 'Copy code'}
+        >
+          {copied ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m5 12 5 5L20 7" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="8" y="8" width="12" height="12" rx="2" />
+              <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+            </svg>
+          )}
         </button>
       </figcaption>
       <pre
         className="ai-code-block-code"
         style={{ fontFamily, ['--ai-code-lines' as any]: lineCount }}
-        aria-label={`Código ${languageLabel} de solo lectura`}
+        aria-label={`${languageLabel} code`}
       >
         <code ref={codeRef}>{code}</code>
       </pre>

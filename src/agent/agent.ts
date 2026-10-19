@@ -9,11 +9,15 @@ export type { CodeDiff, DiffLine }
 /**
  * Agente de código para el playground. Convierte al asistente de IA en un mini
  * "Claude Code": según lo que pida el usuario, o bien responde (pregunta), o bien
- * actúa sobre el código del editor (escribir/arreglar/inyectar/borrar/modificar)
- * y lo ejecuta, iterando en bucle hasta que funciona.
+ * actúa sobre el código del editor y lo ejecuta, reintentando si falla.
  *
- * El modo es transparente: no hay toggle. Lo decide el propio modelo a partir del
- * mensaje del usuario, emitiendo (o no) acciones.
+ * Diseñado para modelos pequeños (0.5B–2B) que no siguen protocolos: el HARNESS
+ * decide el modo de forma determinista (responder / ejecutar / editar) y al modelo
+ * solo se le pide una tarea simple por llamada (contestar en Markdown, o devolver
+ * el fichero completo en un bloque de código). Aplicar la edición, ejecutar,
+ * reintentar con el error y redactar el resumen lo hace el harness. Si el modelo
+ * devuelve basura (restos de protocolo, nada, código parcial), se detecta y se
+ * reintenta o se dice la verdad, nunca se muestra tal cual.
  */
 
 export interface AgentRunResult {
@@ -59,21 +63,31 @@ export interface AgentUI {
   clearStatus(): void
 }
 
-export interface AgentDeps {
-  generate(messages: ChatMessage[], onChunk?: (chunk: string) => void): Promise<string>
-  bridge: AgentBridge
-  ui: AgentUI
-  /** Máximo de acciones antes de parar (evita loops infinitos). */
-  maxSteps?: number
+/** Un intercambio anterior de la conversación (da continuidad a las respuestas). */
+export interface AgentExchange {
+  user: string
+  assistant: string
 }
 
-interface ParsedAction {
-  kind: 'write' | 'run' | 'final' | 'strip-comments' | 'format'
-  code?: string
-  note?: string
-  text?: string
-  /** true si la etiqueta <action> venía explícita en la respuesta del modelo. */
-  tagged: boolean
+export interface AgentGenerationOptions {
+  temperature?: number
+  maxTokens?: number
+}
+
+export interface AgentDeps {
+  generate(
+    messages: ChatMessage[],
+    onChunk?: (chunk: string) => void,
+    options?: AgentGenerationOptions,
+  ): Promise<string>
+  bridge: AgentBridge
+  ui: AgentUI
+  /** Máximo de intentos de edición (cada uno es una llamada al modelo). */
+  maxSteps?: number
+  /** Contexto extra para el modelo (p. ej. la selección del editor). No cuenta para detectar la intención. */
+  context?: string
+  /** Últimos intercambios de la conversación, del más antiguo al más reciente. */
+  history?: AgentExchange[]
 }
 
 // ---------------------------------------------------------------------------
@@ -186,15 +200,57 @@ export function stripComments(code: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Detección de intención de EDICIÓN (heurística, ES + EN).
-// Conservadora a propósito: sólo verbos imperativos de cambio que casi nunca
-// aparecen en preguntas, para no forzar ediciones cuando el usuario sólo pregunta.
+// Detección de intención (heurística, ES + EN). El harness decide el modo: un
+// modelo pequeño enruta muy mal (contesta "final" o "run" en vez de actuar).
 // ---------------------------------------------------------------------------
+// Imperativos e infinitivos (los infinitivos aparecen en peticiones educadas:
+// "¿puedes añadir…?").
 const EDIT_INTENT_RE =
-  /\b(quita|elimina|borra|suprime|remove|delete|strip|arregla|corrige|repara|fix|refactor(?:iza)?|formatea|format(?:ea)?|reempl(?:aza|azar)|replace|renombra|rename|a[ñn]ade|agrega|inserta|insert|implementa|implement|extrae|extract|optimiza|optimize|traduce|translate)\b/i
+  /\b(quita(?:r)?|elimina(?:r)?|borra(?:r)?|suprim(?:e|ir)|remove|delete|strip|arregla(?:r)?|corrig(?:e)|corregir|repara(?:r)?|fix|refactor(?:iza(?:r)?)?|formatea(?:r)?|format|reempl(?:aza|azar)|replace|sustitu(?:ye|ir)|renombra(?:r)?|rename|a[ñn]ad(?:e|ir)|agrega(?:r)?|add|inserta(?:r)?|insert|implementa(?:r)?|implement|extra(?:e|er)|extract|optimiza(?:r)?|optimize|tradu(?:ce|cir)|translate|cambia(?:r)?|change|conviert(?:e)|convertir|convert|crea(?:r)?|create|genera(?:r)?|generate|escrib(?:e|ir)|write|haz|hacer|make|mueve|mover|move|actualiza(?:r)?|update|simplifica(?:r)?|simplify|mejora(?:r)?|improve|completa(?:r)?|complete|termina(?:r)?|finish)\b/i
+
+// Preguntas ("¿cómo funciona…?", "why…", "explain…"): aunque contengan un verbo
+// de edición ("¿cómo puedo añadir…?") el usuario pide una explicación.
+const QUESTION_LEAD_RE =
+  /^[¿¡\s]*(c[oó]mo|por\s*qu[eé]|qu[eé]|cu[aá]l(?:es)?|cu[aá]ndo|d[oó]nde|para\s+qu[eé]|explica|expl[ií]ca(?:me|lo)|how|why|what|which|when|where|is|are|does|do|explain)\b/i
+
+// Peticiones educadas en forma de pregunta ("¿puedes añadir…?", "can you fix…")
+// sí piden un cambio.
+const POLITE_REQUEST_RE = /\b(puedes|podr[ií]as|quieres|can you|could you|would you|please|por favor)\b/i
+
+const RUN_INTENT_RE =
+  /\b(ejec[uú]ta(?:r|lo)?|c[oó]rre(?:r|lo)|run(?:\s+it)?|pru[eé]ba(?:lo)?|test\s+it|qu[eé]\s+(?:imprime|devuelve|sale|muestra|da)|what\s+does\s+it\s+(?:print|output|return|log|show))\b/i
+
+export type AgentMode = 'answer' | 'run' | 'edit'
+
+// Saludos y agradecimientos sueltos. Con el código en el prompt, un modelo pequeño
+// responde a "Hola" inventándose que lo ha modificado; para estos no se envía.
+const SMALL_TALK_RE =
+  /^[¡¿\s]*(?:hola|holi|hey|hi|hello|buenas(?:\s+(?:tardes|noches))?|buenos\s+d[ií]as|good\s+(?:morning|afternoon|evening)|qu[eé]\s+tal|gracias|muchas\s+gracias|thanks|thank\s+you|ok(?:ay)?|vale|genial|perfecto|great|cool)(?:\s+\S+)?[\s!.,?¡¿😀-🙏]*$/iu
+
+// Los modelos pequeños ignoran "responde en el idioma del usuario", pero sí siguen
+// un idioma nombrado explícitamente. Basta con distinguir español de inglés.
+const SPANISH_HINT_RE =
+  /[¿¡ñáéíóú]|\b(?:el|la|los|las|que|qu[eé]|de|del|y|es|un|una|por|para|con|haz|hola|gracias|c[oó]digo|funci[oó]n|a[ñn]ade|arregla|quita|imprime|explica)\b/i
+
+export function detectUserLanguage(userMessage: string): 'Spanish' | 'English' {
+  return SPANISH_HINT_RE.test(userMessage) ? 'Spanish' : 'English'
+}
+
+export function isSmallTalk(userMessage: string): boolean {
+  return SMALL_TALK_RE.test(userMessage.trim())
+}
 
 export function isEditIntent(userMessage: string): boolean {
   return EDIT_INTENT_RE.test(userMessage)
+}
+
+/** Decide qué hace el harness con el mensaje: responder, ejecutar y comentar, o editar. */
+export function detectAgentMode(userMessage: string): AgentMode {
+  const message = userMessage.trim()
+  const isQuestion = QUESTION_LEAD_RE.test(message) && !POLITE_REQUEST_RE.test(message)
+  if (isEditIntent(message) && !isQuestion) return 'edit'
+  if (RUN_INTENT_RE.test(message)) return 'run'
+  return 'answer'
 }
 
 // Otros verbos de edición que, si aparecen, indican que la petición NO es una
@@ -206,7 +262,7 @@ const OTHER_WORK_RE =
  * Detecta peticiones que son una transformación DETERMINISTA pura (quitar
  * comentarios, formatear). En esos casos el harness la ejecuta él mismo sin pasar
  * por el modelo, que es el eslabón poco fiable. Devuelve null si la petición mezcla
- * otro trabajo (p.ej. "quita los comentarios Y añade tipos") -> ahí sí usamos el loop.
+ * otro trabajo (p.ej. "quita los comentarios Y añade tipos") -> ahí sí usamos el modelo.
  */
 export function detectDeterministicIntent(userMessage: string): 'strip-comments' | 'format' | null {
   const m = userMessage.toLowerCase()
@@ -223,96 +279,260 @@ export function detectDeterministicIntent(userMessage: string): 'strip-comments'
 }
 
 // ---------------------------------------------------------------------------
-// Protocolo (etiquetas + bloques de código; más fiable que JSON en modelos pequeños)
+// Limpieza de la salida del modelo
 // ---------------------------------------------------------------------------
-function buildSystemPrompt(language: string): string {
-  return `You are a coding AGENT embedded in a live ${language} playground. You can talk to the user AND directly control the code in the editor.
 
-You work in a loop. On EACH turn you output EXACTLY ONE action, and you MUST begin your reply with its <action> tag:
+// Palabras sueltas que un modelo pequeño emite cuando intenta "seguir un
+// protocolo" en vez de contestar. Nunca son una respuesta válida por sí solas.
+const PROTOCOL_WORD_RE = /^(?:final|run|write|answer|response|respuesta|output|done|ok|assistant|action|edit)\s*[:.]?$/i
 
-1) To CHANGE the code (fix a bug, add a feature, inject, delete or modify anything), rewrite the WHOLE file:
-<action>write</action>
-\`\`\`${language}
-<the complete, updated code>
-\`\`\`
+/**
+ * Quita razonamiento (`<think>`), etiquetas de protocolo y prefijos de rol que
+ * algunos modelos cuelan en la respuesta, y las líneas que solo son una palabra
+ * de protocolo ("final", "run"…).
+ */
+// Un modelo pequeño a veces sigue escribiendo la conversación e inventa el
+// siguiente turno del usuario ("User message: …"): todo eso sobra.
+const INVENTED_TURN_RE = /^\s*(?:user message|user|usuario|human|requested change|current code)\s*:/im
 
-2) To EXECUTE the current code and read the console output / errors:
-<action>run</action>
+export function cleanModelText(raw: string): string {
+  const inventedTurn = raw.match(INVENTED_TURN_RE)
+  const ownTurn = inventedTurn?.index ? raw.slice(0, inventedTurn.index) : raw
+  return ownTurn
+    .replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '')
+    .replace(/<\/?(?:action|answer|response|final|output)[^>]*>/gi, '')
+    .replace(/^\s*(?:assistant|asistente|ai|response|respuesta|answer)\s*:\s*/i, '')
+    .split('\n')
+    .filter((line) => !PROTOCOL_WORD_RE.test(line.trim()))
+    .join('\n')
+    .trim()
+}
 
-3) To REMOVE every comment from the current code (done deterministically for you — do NOT rewrite the file yourself for this):
-<action>strip-comments</action>
+// Metafrases con las que un modelo pequeño anuncia que va a repetir su respuesta
+// ("Por lo tanto, la respuesta al usuario sería:"). Todo lo que sigue es eco.
+const ECHO_LEAD_RE =
+  /^\s*(?:(?:por lo tanto|así que|en resumen|therefore|so),?\s*)?(?:la respuesta(?: final)?(?: al usuario)?|mi respuesta|the (?:final )?(?:answer|response|reply)(?: to the user)?|my (?:answer|response))\s+(?:ser[ií]a|es|would be|is)\s*:?\s*$/im
 
-4) To FORMAT / prettify the current code (done deterministically for you — do NOT rewrite the file yourself for this):
-<action>format</action>
+function normalizeForComparison(text: string): string {
+  return text.toLowerCase().replace(/[`*_#>]/g, '').replace(/\s+/g, ' ').trim()
+}
 
-5) To FINISH and reply to the user (also for pure questions/explanations that need no code change):
-<action>final</action>
-<your message to the user, in Markdown>
+// Etiquetas que un modelo pequeño copia de las instrucciones ("Change:",
+// "Sentence:") en lugar de escribir directamente la frase.
+const PROSE_LABEL_RE =
+  /^\s*(?:change|changes|sentence|explanation|description|summary|note|answer|response|cambio|cambios|frase|explicaci[oó]n|descripci[oó]n|resumen|nota|respuesta)\s*:\s*/i
 
-Rules:
-- ALWAYS start your reply with one of the <action> tags above. Never answer with plain prose alone.
-- Decide from the request whether to answer or to act. Questions -> <action>final</action>. Fix/change requests -> act first, then finish.
-- For "remove/strip the comments" use <action>strip-comments</action>. For "format/prettify" use <action>format</action>. These are reliable; do NOT hand-rewrite the file for them.
-- NEVER claim you changed, removed or rewrote something without emitting the action that actually does it. Saying "done" without an edit is a failure.
-- IMPORTANT: console.log / console.warn / console.error are normal program OUTPUT, NOT errors. Only treat the run as failed if the output explicitly says the execution threw an uncaught error.
-- After a run that succeeded (no uncaught error), reply with <action>final</action>. Do NOT keep rewriting working code.
-- If you cannot fix a real error after one attempt, stop with <action>final</action> and explain it. Never loop.
-- With "write" always output the entire file, never a diff.
-- Keep going autonomously; do not ask for confirmation mid-task.
-- Match the user's language in your final message.`
+/** Explicación de una edición: la primera frase útil, sin etiquetas ni eco. */
+export function cleanEditProse(prose: string): string {
+  const paragraph = removeEchoes(prose)
+    .split('\n')
+    .map((line) => line.replace(PROSE_LABEL_RE, '').trim())
+    .find((line) => isMeaningfulAnswer(line))
+  return paragraph ?? ''
+}
+
+/** Quita el eco: la repetición tras una metafrase y los párrafos duplicados. */
+export function removeEchoes(text: string): string {
+  const echoLead = text.match(ECHO_LEAD_RE)
+  const beforeEcho = echoLead?.index ? text.slice(0, echoLead.index) : text
+  const seen = new Set<string>()
+  return beforeEcho
+    .split(/\n{2,}/)
+    .filter((paragraph) => {
+      const key = normalizeForComparison(paragraph)
+      if (!key) return false
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .join('\n\n')
+    .trim()
+}
+
+/** ¿`text` repite (casi) literalmente `previous`? Proporción de palabras compartidas. */
+export function isRepeatOf(text: string, previous: string | undefined): boolean {
+  if (!previous) return false
+  const words = (value: string) => new Set(normalizeForComparison(value).split(' ').filter((word) => word.length > 3))
+  const current = words(text)
+  const earlier = words(previous)
+  if (current.size < 8 || earlier.size < 8) return false
+  let shared = 0
+  for (const word of current) if (earlier.has(word)) shared++
+  return shared / current.size > 0.8
+}
+
+/** ¿El texto (ya limpio) es una respuesta de verdad y no un resto vacío? */
+export function isMeaningfulAnswer(text: string): boolean {
+  return text.replace(/[\s`*_#>.\-]/g, '').length >= 2
 }
 
 /**
- * Prompt de cada turno (#4). En vez de acumular el historial completo (que en un
- * modelo con ventana pequeña acaba tapando la instrucción original), reconstruimos
- * un contexto compacto: código ACTUAL del editor + petición + un log breve de lo
- * hecho hasta ahora (sin re-incrustar el fichero entero en cada mensaje).
+ * Extrae el fichero completo que devuelve el modelo y la explicación que lo
+ * acompaña. Si hay varios bloques (p. ej. un fragmento y luego el fichero), se
+ * queda con el más largo: es el que contiene el fichero entero.
  */
-function buildTurnPrompt(
-  userMessage: string,
-  code: string,
-  language: string,
-  transcript: string[],
-): string {
-  const codeBlock = code.trim() ? `\`\`\`${language}\n${code}\n\`\`\`` : '(the editor is empty)'
-  const progress = transcript.length ? `\n\nProgress so far:\n${transcript.join('\n')}` : ''
-  return `The code currently in the editor is:\n${codeBlock}\n\nUser request: ${userMessage}${progress}\n\nOutput your next single action now.`
+export function extractEditedCode(raw: string): { code: string | null; prose: string } {
+  const text = cleanModelText(raw)
+  const blocks = [...text.matchAll(/```[a-zA-Z0-9_-]*[^\S\r\n]*\r?\n([\s\S]*?)```/g)]
+  if (blocks.length === 0) return { code: null, prose: text }
+  const longest = blocks.reduce((best, block) => (block[1].length > best[1].length ? block : best))
+  const prose = text.replace(/```[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim()
+  return { code: longest[1].replace(/\r?\n$/, ''), prose }
 }
 
-function stripThink(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+// Verbos que justifican que el fichero nuevo sea mucho más corto que el actual.
+const SHRINK_INTENT_RE =
+  /\b(quita|elimina|borra|suprime|remove|delete|strip|simplifica|simplify|acorta|shorten|reduce|limpia|clean)\b/i
+
+/**
+ * Un modelo pequeño a menudo devuelve solo la parte que cambió. Aplicarla
+ * borraría el resto del fichero: si el resultado pierde más de la mitad de las
+ * líneas sin que se haya pedido borrar, lo tratamos como parcial.
+ */
+export function looksLikePartialEdit(oldCode: string, newCode: string, userMessage: string): boolean {
+  const oldLines = oldCode.split('\n').filter((line) => line.trim()).length
+  const newLines = newCode.split('\n').filter((line) => line.trim()).length
+  if (oldLines < 6) return false
+  return newLines < oldLines * 0.5 && !SHRINK_INTENT_RE.test(userMessage)
 }
 
-function extractFirstCodeBlock(text: string): string | null {
-  const match = text.match(/```[a-zA-Z0-9]*\r?\n?([\s\S]*?)```/)
-  if (!match) return null
-  return match[1].replace(/\r?\n$/, '')
+// Peticiones que solo añaden: nada de lo que ya hay debería desaparecer.
+const ADDITIVE_INTENT_RE =
+  /\b(a[ñn]ad(?:e|ir)|agrega(?:r)?|add|inserta(?:r)?|insert|tambi[eé]n|also|adem[aá]s|as\s+well|incluye|include)\b/i
+
+function normalizeCodeLine(line: string): string {
+  return line.trim().replace(/;$/, '').replace(/\s+/g, ' ').replace(/"/g, "'")
 }
 
-export function parseAction(raw: string): ParsedAction {
-  const text = stripThink(raw)
-  const tagMatch = text.match(/<action>\s*(write|run|final|strip-comments|format)\s*<\/action>/i)
+// Palabras que aparecen en casi cualquier línea y no dicen qué hace: si contasen,
+// `console.log(total)` y `console.log(max)` parecerían la misma línea.
+const COMMON_TOKENS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'of', 'in', 'while', 'new', 'this',
+  'true', 'false', 'null', 'undefined', 'await', 'async', 'console', 'log', 'info', 'warn', 'error', 'Math',
+])
 
-  if (!tagMatch) {
-    // Sin etiqueta: es texto suelto. Lo tratamos como respuesta final, pero marcamos
-    // tagged=false para que el loop pueda desconfiar si se esperaba una edición (#1).
-    return { kind: 'final', text, tagged: false }
-  }
+function lineTokens(line: string): Set<string> {
+  return new Set((line.match(/[A-Za-z_$][\w$]*|\d+/g) ?? []).filter((token) => !COMMON_TOKENS.has(token)))
+}
 
-  const kind = tagMatch[1].toLowerCase() as ParsedAction['kind']
-  const after = text.slice((tagMatch.index ?? 0) + tagMatch[0].length).trim()
+// Dos líneas "son la misma" modificada si comparten la mayoría de identificadores
+// (`console.log(total)` → `console.log("Total:", total)`).
+function areSimilarLines(a: string, b: string): boolean {
+  const left = lineTokens(a)
+  const right = lineTokens(b)
+  if (left.size === 0 || right.size === 0) return false
+  let shared = 0
+  for (const token of left) if (right.has(token)) shared++
+  return shared / Math.min(left.size, right.size) >= 0.6
+}
 
-  if (kind === 'write') {
-    const code = extractFirstCodeBlock(after) ?? extractFirstCodeBlock(text) ?? ''
-    const note = after.split('```')[0].trim()
-    return { kind: 'write', code, note: note || undefined, tagged: true }
-  }
+function isDroppedLine(line: string, keptLines: Set<string>, newLines: string[]): boolean {
+  const normalized = normalizeCodeLine(line)
+  if (!normalized || normalized.startsWith('//') || keptLines.has(normalized)) return false
+  return !newLines.some((newLine) => areSimilarLines(line, newLine))
+}
 
-  if (kind === 'run' || kind === 'strip-comments' || kind === 'format') {
-    return { kind, tagged: true }
-  }
+/**
+ * Líneas del código actual que han desaparecido en la propuesta (ni están ni hay
+ * una versión modificada). En una petición aditiva ("añade…", "imprime también…")
+ * un modelo pequeño suele reescribir y perder líneas que no debía tocar.
+ */
+export function findDroppedLines(oldCode: string, newCode: string, userMessage: string): string[] {
+  if (!ADDITIVE_INTENT_RE.test(userMessage) || SHRINK_INTENT_RE.test(userMessage)) return []
+  const newLines = newCode.split('\n')
+  const kept = new Set(newLines.map(normalizeCodeLine))
+  return oldCode
+    .split('\n')
+    .filter((line) => isDroppedLine(line, kept, newLines))
+    .map((line) => line.trim())
+}
 
-  return { kind: 'final', text: after || text, tagged: true }
+/**
+ * Arreglo determinista para una edición aditiva que perdió líneas: conserva las
+ * líneas nuevas del modelo en su sitio y restaura las borradas en el suyo (salvo
+ * las que el modelo solo modificó). Más fiable que pedirle otro intento.
+ */
+export function mergeAdditiveEdit(oldCode: string, newCode: string): string {
+  const newLines = newCode.split('\n')
+  const kept = new Set(newLines.map(normalizeCodeLine))
+  return computeLineDiff(oldCode, newCode)
+    .lines.filter((line) => line.type !== 'del' || isDroppedLine(line.text, kept, newLines))
+    .map((line) => line.text)
+    .join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Prompts: una sola tarea por llamada, sin protocolo que seguir.
+// ---------------------------------------------------------------------------
+
+function buildAnswerSystemPrompt(replyLanguage: string): string {
+  return `You are GoJS Assistant, a friendly coding assistant inside a JavaScript and TypeScript playground.
+Reply to the user's last message directly, in Markdown.
+Reply in ${replyLanguage}.
+Be concise and specific. When the user asks about the code, refer to the actual code shown.
+If the user just greets you, greet back briefly and offer help with their code.
+Never output tags, labels or words like "final" or "run" on their own.`
+}
+
+function buildEditSystemPrompt(language: string, replyLanguage: string): string {
+  return `You edit code in a ${language} playground.
+Apply the requested change to the user's code exactly as asked, keeping everything else the same.
+Reply with the COMPLETE updated file inside ONE \`\`\`${language} code block. Never return only the changed part.
+After the code block, write one short sentence in ${replyLanguage} that describes the change.
+Output nothing else.`
+}
+
+
+function codeBlock(code: string, language: string): string {
+  return code.trim() ? `\`\`\`${language}\n${code}\n\`\`\`` : '(the editor is empty)'
+}
+
+function historyMessages(history: AgentExchange[] | undefined): ChatMessage[] {
+  // Muy poco historial y recortado: a un modelo pequeño un historial largo le pesa
+  // más que la petición nueva (tiende a repetir su respuesta anterior).
+  return (history ?? []).slice(-2).flatMap((exchange) => [
+    { role: 'user' as const, content: exchange.user },
+    {
+      role: 'assistant' as const,
+      content: exchange.assistant.length > 400 ? `${exchange.assistant.slice(0, 400)}…` : exchange.assistant,
+    },
+  ])
+}
+
+function buildAnswerMessages(input: {
+  message: string
+  code: string
+  language: string
+  context?: string
+  runReport?: string
+  history?: AgentExchange[]
+}): ChatMessage[] {
+  const parts = isSmallTalk(input.message) ? [] : [`The user's current code:\n${codeBlock(input.code, input.language)}`]
+  if (input.context) parts.push(input.context)
+  if (input.runReport) parts.push(input.runReport)
+  parts.push(`User message: ${input.message}`)
+  return [
+    { role: 'system', content: buildAnswerSystemPrompt(detectUserLanguage(input.message)) },
+    ...historyMessages(input.history),
+    { role: 'user', content: parts.join('\n\n') },
+  ]
+}
+
+function buildEditMessages(input: {
+  message: string
+  code: string
+  language: string
+  context?: string
+  feedback?: string
+}): ChatMessage[] {
+  const parts = [`Current code:\n${codeBlock(input.code, input.language)}`]
+  if (input.context) parts.push(input.context)
+  parts.push(`Requested change: ${input.message}`)
+  if (input.feedback) parts.push(input.feedback)
+  return [
+    { role: 'system', content: buildEditSystemPrompt(input.language, detectUserLanguage(input.message)) },
+    { role: 'user', content: parts.join('\n\n') },
+  ]
 }
 
 function summarizeOutput(result: AgentRunResult): string {
@@ -321,27 +541,101 @@ function summarizeOutput(result: AgentRunResult): string {
   return lines > 0 ? `${lines} line${lines === 1 ? '' : 's'} of output` : 'no errors'
 }
 
+function truncateOutput(output: string, max = 800): string {
+  const trimmed = output.trim() || '(no console output)'
+  return trimmed.length > max ? `${trimmed.slice(0, max)}\n…(truncated)` : trimmed
+}
+
+function firstSentence(text: string): string | undefined {
+  const sentence = text.split('\n').find((line) => line.trim())?.trim()
+  return sentence && sentence.length <= 140 ? sentence : undefined
+}
+
+const NO_ANSWER_MESSAGE =
+  "The model couldn't produce an answer for that. Try rephrasing it, or pick a larger model in the selector below."
+
+// ---------------------------------------------------------------------------
+// Loop principal
+// ---------------------------------------------------------------------------
+
 export async function runAgent(userMessage: string, deps: AgentDeps): Promise<void> {
   const { generate, bridge, ui } = deps
-  const maxSteps = deps.maxSteps ?? 8
   const language = bridge.language?.() ?? 'javascript'
-  const editIntent = isEditIntent(userMessage)
 
-  // Fast-path determinista (#3): para transformaciones mecánicas puras NO dependemos
-  // del modelo (que enruta de forma poco fiable): las hace el propio harness.
+  const callModel = async (messages: ChatMessage[], options?: AgentGenerationOptions): Promise<string | null> => {
+    try {
+      return await generate(messages, undefined, options)
+    } catch (error) {
+      ui.clearStatus()
+      ui.finalAnswer(`⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    }
+  }
+
+  const previousAnswer = deps.history?.at(-1)?.assistant
+  const tidy = (raw: string) => removeEchoes(cleanModelText(raw))
+  const isUsable = (text: string) => isMeaningfulAnswer(text) && !isRepeatOf(text, previousAnswer)
+
+  // Pide una respuesta en Markdown. Si el modelo devuelve basura (vacío, "final",
+  // o repite su respuesta anterior), reintenta una vez SIN historial y, si
+  // tampoco, devuelve null para que el llamante lo diga en vez de mostrarla.
+  const ask = async (runReport?: string): Promise<string | null | undefined> => {
+    ui.status('Thinking…')
+    const input = { message: userMessage, code: bridge.getCode(), language, context: deps.context, runReport }
+    const first = await callModel(buildAnswerMessages({ ...input, history: runReport ? undefined : deps.history }))
+    if (first === null) return undefined
+    let text = tidy(first)
+    if (!isUsable(text)) {
+      const retry = await callModel(buildAnswerMessages(input))
+      if (retry === null) return undefined
+      text = tidy(retry)
+    }
+    return isUsable(text) ? text : null
+  }
+
+  const answer = async (): Promise<void> => {
+    const text = await ask()
+    if (text === undefined) return
+    ui.clearStatus()
+    ui.finalAnswer(text ?? NO_ANSWER_MESSAGE)
+  }
+
+  const runCode = async (): Promise<AgentRunResult> => {
+    ui.status('Running the code…')
+    const handle = ui.run()
+    let result: AgentRunResult
+    try {
+      result = await bridge.run()
+    } catch (error) {
+      result = { output: error instanceof Error ? error.message : String(error), hasError: true }
+    }
+    handle.update(summarizeOutput(result), result.hasError ? 'error' : 'ok')
+    return result
+  }
+
+  // Aplica una edición al editor y pinta su diff. Devuelve false si no cambia nada.
+  const applyEdit = (newCode: string, note?: string): boolean => {
+    const oldCode = bridge.getCode()
+    const diff = computeLineDiff(oldCode, newCode)
+    if (diff.added === 0 && diff.removed === 0) return false
+    ui.status('Editing the code…')
+    bridge.setCode(newCode)
+    ui.edit({ added: diff.added, removed: diff.removed, note, lines: diff.lines })
+    return true
+  }
+
+  // Fast-path determinista: para transformaciones mecánicas puras NO dependemos
+  // del modelo: las hace el propio harness.
   const deterministic = detectDeterministicIntent(userMessage)
   if (deterministic === 'strip-comments') {
     const oldCode = bridge.getCode()
     const newCode = stripComments(oldCode)
-    const diff = computeLineDiff(oldCode, newCode)
+    const { removed } = computeLineDiff(oldCode, newCode)
+    const changed = applyEdit(newCode, 'Removed comments')
     ui.clearStatus()
-    if (diff.removed === 0 && diff.added === 0) {
-      ui.finalAnswer('The code has no comments to remove.')
-      return
-    }
-    bridge.setCode(newCode)
-    ui.edit({ added: diff.added, removed: diff.removed, note: 'Removed comments', lines: diff.lines })
-    ui.finalAnswer(`Removed all comments (−${diff.removed} ${diff.removed === 1 ? 'line' : 'lines'}).`)
+    ui.finalAnswer(
+      changed ? `Removed all comments (−${removed} ${removed === 1 ? 'line' : 'lines'}).` : 'The code has no comments to remove.',
+    )
     return
   }
   if (deterministic === 'format' && bridge.format) {
@@ -354,174 +648,104 @@ export async function runAgent(userMessage: string, deps: AgentDeps): Promise<vo
       newCode = oldCode
     }
     const diff = computeLineDiff(oldCode, newCode)
+    const changed = applyEdit(newCode, 'Formatted with Prettier')
     ui.clearStatus()
-    if (diff.removed === 0 && diff.added === 0) {
-      ui.finalAnswer('The code is already properly formatted.')
-      return
-    }
-    bridge.setCode(newCode)
-    ui.edit({ added: diff.added, removed: diff.removed, note: 'Formatted with Prettier', lines: diff.lines })
-    ui.finalAnswer(`Formatted the code (+${diff.added} −${diff.removed}).`)
+    ui.finalAnswer(changed ? `Formatted the code (+${diff.added} −${diff.removed}).` : 'The code is already properly formatted.')
     return
   }
 
-  // Log breve de lo hecho, en vez de acumular el fichero completo cada turno (#4).
-  const transcript: string[] = []
-  let didEdit = false
-  let noChangeWrites = 0
-  let previousErrorOutput: string | null = null
-  let editIntentNudged = false
+  const mode = detectAgentMode(userMessage)
 
-  // Aplica una edición (write / strip-comments / format) al editor y actualiza el
-  // estado. Devuelve true si hubo cambios reales; false si el código quedó igual.
-  const applyEdit = (newCode: string, note?: string): boolean => {
-    const oldCode = bridge.getCode()
-    const diff = computeLineDiff(oldCode, newCode)
-    if (diff.added === 0 && diff.removed === 0) return false
-    ui.status('Editing the code…')
-    bridge.setCode(newCode)
-    didEdit = true
-    noChangeWrites = 0
-    ui.edit({ added: diff.added, removed: diff.removed, note, lines: diff.lines })
-    transcript.push(`- Applied an edit (+${diff.added} -${diff.removed}). The editor now holds the updated code shown above.`)
-    return true
+  if (mode === 'answer') {
+    await answer()
+    return
   }
 
-  for (let stepIndex = 0; stepIndex < maxSteps; stepIndex++) {
-    ui.status(stepIndex === 0 ? 'Planning next moves…' : didEdit ? 'Reviewing the result…' : 'Thinking…')
+  if (mode === 'run') {
+    // La salida real la pone el harness: un modelo pequeño la inventa o la ignora.
+    // El modelo solo añade, si puede, una explicación breve.
+    const result = await runCode()
+    // Sin las anotaciones de línea (" (L3)"): el modelo las copiaba en su respuesta.
+    const output = truncateOutput(result.output).replace(/ \(L\d+\)$/gm, '')
+    const report = `\`\`\`console\n${output}\n\`\`\``
+    const explanation = await ask(
+      `The code was just executed. Console output:\n\`\`\`\n${output}\n\`\`\`${
+        result.hasError ? '\nThe execution threw an uncaught error.' : ''
+      }\nExplain the result briefly.`,
+    )
+    if (explanation === undefined) return
+    ui.clearStatus()
+    ui.finalAnswer(explanation ? `${report}\n\n${explanation}` : report)
+    return
+  }
 
-    const messages: ChatMessage[] = [
-      { role: 'system', content: buildSystemPrompt(language) },
-      { role: 'user', content: buildTurnPrompt(userMessage, bridge.getCode(), language, transcript) },
-    ]
+  // Edición: el modelo solo devuelve el fichero completo; el harness lo valida,
+  // lo aplica, lo ejecuta y, si falla, le pasa el error para que lo arregle.
+  const maxAttempts = Math.max(1, Math.min(deps.maxSteps ?? 4, 4))
+  let feedback: string | undefined
+  let lastError: string | null = null
+  let editsApplied = 0
+  let lastProse = ''
 
-    let raw = ''
-    try {
-      raw = await generate(messages)
-    } catch (error) {
-      ui.clearStatus()
-      ui.finalAnswer(`⚠️ ${error instanceof Error ? error.message : String(error)}`)
-      return
-    }
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    ui.status(attempt === 0 ? 'Planning the change…' : 'Fixing the code…')
+    const raw = await callModel(
+      buildEditMessages({ message: userMessage, code: bridge.getCode(), language, context: deps.context, feedback }),
+      { temperature: 0 },
+    )
+    if (raw === null) return
 
-    const action = parseAction(raw)
+    const { code: newCode, prose } = extractEditedCode(raw)
 
-    if (action.kind === 'final') {
-      // #1 + #2: el usuario pidió cambiar el código pero el modelo "termina" sin
-      // haber editado nada (a veces sin ni siquiera la etiqueta <action>). No nos
-      // fiamos: le damos un aviso estricto y una segunda oportunidad de actuar.
-      if (editIntent && !didEdit && !editIntentNudged) {
-        editIntentNudged = true
-        transcript.push(
-          '- You replied as if finished, but you have NOT edited the code yet. The request requires changing it. ' +
-            'Do it now: emit <action>write</action> (full file), or <action>strip-comments</action> / <action>format</action> if that matches. ' +
-            'Do NOT claim it is done without an edit.',
-        )
-        continue
-      }
-
-      ui.clearStatus()
-      // Si tras el aviso sigue sin tocar el código, decimos la verdad en lugar de
-      // repetir una afirmación (posiblemente falsa) de que ya está hecho.
-      if (editIntent && !didEdit) {
-        ui.finalAnswer(
-          "I didn't change the code — it may already be the way you want, or I wasn't able to make the change. Give me a bit more detail and I'll try again.",
-        )
-        return
-      }
-      ui.finalAnswer(action.text?.trim() || '(done)')
-      return
-    }
-
-    if (action.kind === 'strip-comments') {
-      const newCode = stripComments(bridge.getCode())
-      if (!applyEdit(newCode, 'Removed comments')) {
-        transcript.push('- There were no comments to remove; the code is unchanged.')
-      }
+    if (!newCode?.trim()) {
+      feedback = `Your previous reply had no code block. Reply with the complete updated file inside one \`\`\`${language} code block.`
       continue
     }
 
-    if (action.kind === 'format') {
-      if (!bridge.format) {
-        transcript.push('- Formatting is not available here; change the code with <action>write</action> instead.')
-        continue
-      }
-      ui.status('Formatting the code…')
-      let formatted = bridge.getCode()
-      try {
-        formatted = await bridge.format(bridge.getCode())
-      } catch {
-        transcript.push('- Formatting failed; leave the code as it is or edit it with <action>write</action>.')
-        continue
-      }
-      if (!applyEdit(formatted, 'Formatted with Prettier')) {
-        transcript.push('- The code was already properly formatted; nothing changed.')
-      }
+    if (looksLikePartialEdit(bridge.getCode(), newCode, userMessage)) {
+      feedback =
+        'Your previous reply contained only part of the file. Return the COMPLETE file with the change applied, keeping every other line.'
       continue
     }
 
-    if (action.kind === 'write') {
-      const newCode = action.code ?? ''
-      if (!newCode.trim()) {
-        transcript.push(
-          '- Your "write" action had no fenced code block. Output the full updated code inside a ``` block, or use <action>final</action>.',
-        )
-        continue
-      }
-
-      // Sin cambios reales: evita quedarse en bucle reescribiendo lo mismo.
-      if (!applyEdit(newCode, action.note)) {
-        noChangeWrites++
-        if (noChangeWrites >= 2) {
-          ui.clearStatus()
-          ui.finalAnswer('The code is already as it should be; there are no more changes to apply.')
-          return
-        }
-        transcript.push('- That write produced no changes (identical code). If the task is done, reply with <action>final</action>.')
-        continue
-      }
-      continue
+    // Petición aditiva que perdió líneas: las restauramos nosotros.
+    let proposal = newCode
+    if (findDroppedLines(bridge.getCode(), newCode, userMessage).length > 0) {
+      proposal = mergeAdditiveEdit(bridge.getCode(), newCode)
     }
 
-    if (action.kind === 'run') {
-      ui.status('Running the code…')
-      const handle = ui.run()
-      let result: AgentRunResult
-      try {
-        result = await bridge.run()
-      } catch (error) {
-        result = { output: error instanceof Error ? error.message : String(error), hasError: true }
-      }
-      handle.update(summarizeOutput(result), result.hasError ? 'error' : 'ok')
-
-      const observation = result.output.trim() || '(sin salida en consola)'
-
-      // Si el mismo error se repite, no seguimos intentando (anti-bucle).
-      if (result.hasError && previousErrorOutput !== null && observation === previousErrorOutput) {
-        ui.clearStatus()
-        ui.finalAnswer(
-          `I could not fix the error automatically:\n\n\`\`\`\n${observation.slice(0, 500)}\n\`\`\`\n\nTake a look or give me more details.`,
-        )
-        return
-      }
-      previousErrorOutput = result.hasError ? observation : null
-
-      const truncated = observation.length > 800 ? `${observation.slice(0, 800)}\n…(truncated)` : observation
-      transcript.push(
-        `- Ran the code. Console output:\n\`\`\`\n${truncated}\n\`\`\`\n${
-          result.hasError
-            ? '  There is an UNCAUGHT execution error. Fix it with <action>write</action> (full file), then run again. If you cannot, reply <action>final</action> explaining why.'
-            : '  It ran without uncaught errors. Reply with <action>final</action> summarizing what you did.'
-        }`,
-      )
+    const explanation = cleanEditProse(prose)
+    if (!applyEdit(proposal, firstSentence(explanation))) {
+      feedback = 'Your previous reply returned the code unchanged. Apply the requested change this time.'
       continue
     }
+    editsApplied++
+    if (explanation) lastProse = explanation
+
+    const result = await runCode()
+    if (!result.hasError) {
+      lastError = null
+      break
+    }
+
+    const output = truncateOutput(result.output)
+    if (output === lastError) break // el mismo error otra vez: no insistimos
+    lastError = output
+    feedback = `After your change the code throws this error when it runs:\n\`\`\`\n${output}\n\`\`\`\nFix it and return the complete file again.`
   }
 
   ui.clearStatus()
-  ui.finalAnswer(
-    didEdit
-      ? '_I reached the step limit. Check the current code and tell me if you want me to continue._'
-      : '_I could not complete the task. Can you give me more details?_',
-  )
+  if (editsApplied === 0) {
+    ui.finalAnswer(
+      "I couldn't apply that change — the model didn't return a usable version of the code. Try describing it differently, or pick a larger model.",
+    )
+    return
+  }
+  if (lastError !== null) {
+    ui.finalAnswer(
+      `I changed the code, but it still throws an error:\n\n\`\`\`\n${lastError.slice(0, 500)}\n\`\`\`\n\nTell me more about what you expect and I'll try again.`,
+    )
+    return
+  }
+  ui.finalAnswer(lastProse || 'Updated the code. It runs without errors.')
 }

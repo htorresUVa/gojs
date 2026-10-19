@@ -144,7 +144,6 @@ function render() {
 
   const list = document.createElement('div')
   list.className = 'tabs-list'
-  list.dataset.tauriDragRegion = ''
   list.setAttribute('role', 'tablist')
   list.setAttribute('aria-label', 'Open files')
 
@@ -328,9 +327,13 @@ function getTabTitle(t: Tab): string {
     return t.name.length > max ? t.name.slice(0, max - 1) + '…' : t.name
   }
 
-  // Si no, usar primera línea del código (comportamiento por defecto)
+  // Si no, usar primera línea del código (comportamiento por defecto), sin los
+  // marcadores de comentario: `// fizzbuzz` se muestra como `fizzbuzz`.
   const text = t.model ? t.model.getValue() : t.content
-  const firstLine = (text.split('\n')[0] || '').trim()
+  const firstLine = (text.split('\n')[0] || '')
+    .trim()
+    .replace(/^(?:\/\/+|\/\*+|\*+)\s*/, '')
+    .replace(/\s*\*\/$/, '')
   if (!firstLine) return 'untitled'
   const max = 24
   return firstLine.length > max ? firstLine.slice(0, max - 1) + '…' : firstLine

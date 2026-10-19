@@ -15,10 +15,15 @@ type ParsedChatModelId = {
   quantization: string
 }
 
+// Dos familias en el catálogo: Qwen 3.5 (conversación y ediciones) y Qwen 2.5
+// Coder (entrenado para fill-in-the-middle: mejor y más rápido en autocompletado).
+export type ChatModelKind = 'chat' | 'code'
+
 export type ChatModelPresentation = {
   level: 1 | 2 | 3 | 4
   name: 'Small' | 'Medium' | 'Smart' | 'Smarter'
   size: string
+  kind: ChatModelKind
 }
 
 // Preferimos una sola variante por modelo: la más equilibrada para el navegador
@@ -113,20 +118,21 @@ export function getChatModelPresentation(model: ModelRecord): ChatModelPresentat
   const parameterCount = parsedModelId ? Number.parseFloat(parsedModelId.modelSize) : Number.NaN
   const size =
     typeof model.vram_required_MB === 'number' ? `${(model.vram_required_MB / 1024).toFixed(1)} GB` : '—'
+  const kind: ChatModelKind = isFimCapableModelId(model.model_id) ? 'code' : 'chat'
 
   if (!Number.isFinite(parameterCount) || parameterCount < 1) {
-    return { level: 1, name: 'Small', size }
+    return { level: 1, name: 'Small', size, kind }
   }
 
   if (parameterCount < 3) {
-    return { level: 2, name: 'Medium', size }
+    return { level: 2, name: 'Medium', size, kind }
   }
 
   if (parameterCount < 6) {
-    return { level: 3, name: 'Smart', size }
+    return { level: 3, name: 'Smart', size, kind }
   }
 
-  return { level: 4, name: 'Smarter', size }
+  return { level: 4, name: 'Smarter', size, kind }
 }
 
 export function getChatModelDisplayName(modelOrId: ModelRecord | string): string {

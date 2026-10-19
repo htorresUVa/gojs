@@ -175,8 +175,7 @@ class ResizePanels extends HTMLElement {
     const style = document.createElement('style')
     style.textContent = `
           :host {
-              --resize-panel-divider-color: var(--surface-divider-color, var(--color-border, #3e3e3e));
-              --resize-panel-accent-color: var(--color-accent, #4fc3f7);
+              --resize-panel-accent-color: var(--wb-active-border, var(--color-accent, #4fc3f7));
               display: flex;
               flex-direction: ${this.isHorizontal ? 'row' : 'column'};
               width: 100%;
@@ -193,44 +192,36 @@ class ResizePanels extends HTMLElement {
               position: relative;
           }
 
+          /* El divisor es el hueco entre tarjetas (sash de VS Code): invisible en
+             reposo; al pasar el ratón muestra una línea de acento centrada. */
           .divider {
-              width: ${this.isHorizontal ? '4px' : '100%'};
-              height: ${this.isHorizontal ? '100%' : '4px'};
+              width: ${this.isHorizontal ? 'var(--wb-gap, 4px)' : '100%'};
+              height: ${this.isHorizontal ? '100%' : 'var(--wb-gap, 4px)'};
               background-color: transparent;
               cursor: ${this.isHorizontal ? 'col-resize' : 'row-resize'};
               flex-shrink: 0;
               position: relative;
-              display: flex;
-              align-items: center;
-              justify-content: center;
               z-index: 10;
           }
 
-          /* Línea visual del divider */
           .divider::before {
               content: '';
               position: absolute;
-              top: 0;
-              left: 0;
-              width: ${this.isHorizontal ? '1px' : '100%'};
-              height: ${this.isHorizontal ? '100%' : '1px'};
-              background-color: var(--resize-panel-divider-color);
-              transition: all 0.2s ease;
+              ${this.isHorizontal ? 'top: 0; bottom: 0; left: 50%; width: 2px; translate: -50% 0;' : 'left: 0; right: 0; top: 50%; height: 2px; translate: 0 -50%;'}
+              border-radius: 1px;
+              background-color: var(--resize-panel-accent-color);
+              opacity: 0;
+              transition: opacity 0.15s ease;
           }
 
-          /* Línea más gruesa en hover/active sin afectar el layout */
           .divider:hover::before {
-              width: ${this.isHorizontal ? '2px' : '100%'};
-              height: ${this.isHorizontal ? '100%' : '2px'};
-              background-color: var(--resize-panel-accent-color);
-              box-shadow: 0 0 8px color-mix(in srgb, var(--resize-panel-accent-color) 30%, transparent);
+              opacity: 1;
+              transition-delay: 0.2s;
           }
 
           .divider.dragging::before {
-              width: ${this.isHorizontal ? '3px' : '100%'};
-              height: ${this.isHorizontal ? '100%' : '3px'};
-              background-color: var(--resize-panel-accent-color);
-              box-shadow: 0 0 12px color-mix(in srgb, var(--resize-panel-accent-color) 45%, transparent);
+              opacity: 1;
+              transition-delay: 0s;
           }
 
           ::slotted(*) {
@@ -635,8 +626,16 @@ class ResizePanels extends HTMLElement {
       return
     }
 
+    // Los divisores visibles también ocupan sitio: si no se descuentan, la suma
+    // de paneles desborda el contenedor y el último panel queda recortado.
+    const dividerSpace = this.dividers.reduce((sum, divider) => {
+      if (divider.style.display === 'none') return sum
+      const rect = divider.getBoundingClientRect()
+      return sum + (this.isHorizontal ? rect.width : rect.height)
+    }, 0)
     const containerRect = this.getBoundingClientRect()
-    const availableSize = Math.max(0, this.isHorizontal ? containerRect.width : containerRect.height)
+    const containerSize = this.isHorizontal ? containerRect.width : containerRect.height
+    const availableSize = Math.max(0, containerSize - dividerSpace)
 
     const sizes = visibleInfos.map((info) => {
       if (info.size > 0) return info.size

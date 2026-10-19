@@ -44,6 +44,7 @@ import {
 } from './console-values'
 import { initHeaderPopovers } from './popovers'
 import { patchBracketColorizationInComments } from './bracket-tokens'
+import { mixWithMinContrast, pickReadableThemeColor, readableForeground } from './theme-contrast'
 import {
   initTabs,
   createActiveTabModel,
@@ -72,7 +73,13 @@ import './resize-panels'
 import { createRoot, type Root } from 'react-dom/client'
 import { ChatResponse } from './ChatResponse'
 import React from 'react'
-import { runAgent, type AgentBridge, type AgentEditInfo, type AgentRunResult } from './agent/agent'
+import {
+  runAgent,
+  type AgentBridge,
+  type AgentEditInfo,
+  type AgentExchange,
+  type AgentRunResult,
+} from './agent/agent'
 import {
   dequeueChatMessage,
   enqueueChatMessage,
@@ -184,7 +191,9 @@ function hasVisibleTimings(): boolean {
 // la pastilla y el número sin dejar un hueco grande a la izquierda. Crece con ficheros
 // largos (más dígitos) para no solaparse con números de 3+ cifras.
 function lineNumbersMinChars(): number {
-  if (!(currentSettings.lineTimings && currentSettings.lineNumbers && hasVisibleTimings())) return 5
+  // En móvil cada píxel de ancho cuenta: margen de números mínimo.
+  const minimum = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches ? 2 : 5
+  if (!(currentSettings.lineTimings && currentSettings.lineNumbers && hasVisibleTimings())) return minimum
   const digits = String(editor?.getModel()?.getLineCount() ?? 1).length
   return Math.max(7, digits + 5)
 }
@@ -449,6 +458,9 @@ if (isLandingEmbed) {
     lineTimings: true,
     autoLogExpressions: true,
     minimap: false,
+    stickyScroll: false,
+    // El marco del demo del agente es bajo: a 13px caben sus 22 líneas sin scroll.
+    ...(isAgentDemoEmbed ? { fontSize: 13 } : {}),
   }
 }
 
@@ -461,6 +473,10 @@ if (isAgentDemoEmbed) {
 document.addEventListener('keydown', handleFontSizeShortcut, { capture: true })
 let chromePromptApiModelAvailable = false
 let chromePromptApiAvailabilityChecked = false
+
+function isMacPlatform(): boolean {
+  return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -595,6 +611,13 @@ function intelligenceDotsHtml(level: number, maximum = 3): string {
     .join('')
 }
 
+function modelOptionCheckHtml(): string {
+  return `
+    <span class="chatbot-model-check" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"></path></svg>
+    </span>`
+}
+
 function downloadedModelIconHtml(): string {
   return `
     <span class="chatbot-model-downloaded" role="img" aria-label="Downloaded" title="Downloaded">
@@ -624,10 +647,15 @@ function nativeModelVisualHtml(model: LlamaModelInfo): string {
 
 // En web ocultamos los nombres técnicos del catálogo y usamos la misma
 // representación del escritorio: nivel de capacidad, medidor y memoria necesaria.
-function webModelVisualHtml(model: (typeof AVAILABLE_CHAT_MODELS)[number]): string {
+// En el menú la familia la indica la sección; en el selector se antepone si es
+// un modelo de código para no confundirlo con el de chat del mismo nivel.
+function webModelVisualHtml(model: (typeof AVAILABLE_CHAT_MODELS)[number], { showKind = false } = {}): string {
   const presentation = getChatModelPresentation(model)
   const reasoningLabel = `Reasoning level ${presentation.level} of 4`
+  const kindHtml =
+    showKind && presentation.kind === 'code' ? `<span class="chatbot-model-kind">Code</span>` : ''
   return (
+    kindHtml +
     `<span class="chatbot-model-tier">${escapeHtml(presentation.name)}</span>` +
     `<span class="chatbot-iq" role="img" aria-label="${reasoningLabel}" title="${reasoningLabel}">${intelligenceDotsHtml(presentation.level, 4)}</span>` +
     `<span class="chatbot-model-size">${escapeHtml(presentation.size)}</span>`
@@ -824,6 +852,10 @@ function describeModelLoadStatus(state: ChatbotState): string {
 // true mientras el agente está procesando un mensaje (evita reentradas / doble envío).
 let agentBusy = false
 let chatQueue: ChatQueueItem[] = []
+// Últimos intercambios con el agente: dan continuidad a la conversación
+// ("Hola" → "¿y qué hace la línea 3?") sin depender del historial del modelo.
+const AGENT_HISTORY_LIMIT = 6
+let agentHistory: AgentExchange[] = []
 let queuedMessageSequence = 0
 let chatQueueCollapsed = false
 
@@ -855,7 +887,7 @@ function updateComposerModelLabel() {
     const model = getChatModelRecord(userModelChoice)
     if (model) {
       label.classList.add('chatbot-model-label--visual')
-      label.innerHTML = webModelVisualHtml(model)
+      label.innerHTML = webModelVisualHtml(model, { showKind: true })
       return
     }
   }
@@ -927,7 +959,8 @@ function setupComposerModelSelector() {
         const iq = nativeIntelligence(model)
         const state = model.installed ? 'downloaded' : `downloads ${formatModelSize(model.size_bytes)} on first use`
         return `
-      <button type="button" class="chatbot-model-option chatbot-model-option--native${model.id === selected ? ' selected' : ''}" data-model-id="${escapeHtml(model.id)}" role="option" title="${escapeHtml(iq.name)} · ${escapeHtml(state)}">
+      <button type="button" class="chatbot-model-option chatbot-model-option--native${model.id === selected ? ' selected' : ''}" data-model-id="${escapeHtml(model.id)}" role="option" aria-selected="${model.id === selected}" title="${escapeHtml(iq.name)} · ${escapeHtml(state)}">
+        ${modelOptionCheckHtml()}
         ${nativeModelVisualHtml(model)}
         ${model.installed ? downloadedModelIconHtml() : ''}
       </button>`
@@ -949,11 +982,10 @@ function setupComposerModelSelector() {
     const automaticOptionsHtml = automaticOptions
       .map(
         (choice) => `
-      <button type="button" class="chatbot-model-option chatbot-model-option--automatic${choice.id === userModelChoice ? ' selected' : ''}" data-model-id="${escapeHtml(choice.id)}" role="option">
-        <span class="chatbot-model-option-copy">
-          <span class="chatbot-model-option-name">${escapeHtml(choice.name)}</span>
-          <span class="chatbot-model-option-meta">${escapeHtml(choice.meta)}</span>
-        </span>
+      <button type="button" class="chatbot-model-option chatbot-model-option--automatic${choice.id === userModelChoice ? ' selected' : ''}" data-model-id="${escapeHtml(choice.id)}" role="option" aria-selected="${choice.id === userModelChoice}">
+        ${modelOptionCheckHtml()}
+        <span class="chatbot-model-option-name">${escapeHtml(choice.name)}</span>
+        <span class="chatbot-model-option-meta">${escapeHtml(choice.meta)}</span>
       </button>`,
       )
       .join('')
@@ -961,27 +993,45 @@ function setupComposerModelSelector() {
     // Gemini (Prompt API) encabeza la lista visual: es el más rápido de tener
     // listo (0 GB, integrado) y solo aparece cuando lo detectamos disponible, en
     // cuyo caso ya está listo, así que siempre lleva la marca de descargado.
+    const promptApiSelected = userModelChoice === CHROME_PROMPT_API_MODEL_ID
     const promptApiOptionHtml = chromePromptApiModelAvailable
       ? `
-      <button type="button" class="chatbot-model-option chatbot-model-option--visual${userModelChoice === CHROME_PROMPT_API_MODEL_ID ? ' selected' : ''}" data-model-id="${escapeHtml(CHROME_PROMPT_API_MODEL_ID)}" role="option" title="Gemini · 0 GB · Built in">
+      <button type="button" class="chatbot-model-option chatbot-model-option--visual${promptApiSelected ? ' selected' : ''}" data-model-id="${escapeHtml(CHROME_PROMPT_API_MODEL_ID)}" role="option" aria-selected="${promptApiSelected}" title="Gemini · 0 GB · Built in">
+        ${modelOptionCheckHtml()}
         ${webPromptApiVisualHtml()}
         ${downloadedModelIconHtml()}
       </button>`
       : ''
 
-    const downloadableOptionsHtml = AVAILABLE_CHAT_MODELS.map((model) => {
+    const downloadableOptionHtml = (model: (typeof AVAILABLE_CHAT_MODELS)[number]) => {
       const selected = model.model_id === userModelChoice
       const presentation = getChatModelPresentation(model)
       const installed = installedModels.has(model.model_id)
       const title = `${presentation.name} · ${presentation.size}${installed ? ' · Downloaded' : ''}`
       return `
-      <button type="button" class="chatbot-model-option chatbot-model-option--visual${selected ? ' selected' : ''}" data-model-id="${escapeHtml(model.model_id)}" role="option" title="${escapeHtml(title)}">
+      <button type="button" class="chatbot-model-option chatbot-model-option--visual${selected ? ' selected' : ''}" data-model-id="${escapeHtml(model.model_id)}" role="option" aria-selected="${selected}" title="${escapeHtml(title)}">
+        ${modelOptionCheckHtml()}
         ${webModelVisualHtml(model)}
         ${installed ? downloadedModelIconHtml() : ''}
       </button>`
-    }).join('')
+    }
 
-    menu.innerHTML = `${automaticOptionsHtml}<div class="chatbot-model-divider" role="separator"></div>${promptApiOptionHtml}${downloadableOptionsHtml}`
+    // Los modelos se agrupan por familia: sin la sección, "Small" de chat y
+    // "Small" de código parecían el mismo modelo repetido.
+    const groupHtml = (title: string, hint: string, optionsHtml: string) =>
+      optionsHtml
+        ? `<div class="chatbot-model-group" role="presentation"><span class="chatbot-model-group-title">${title}</span><span class="chatbot-model-group-hint">${hint}</span></div>${optionsHtml}`
+        : ''
+    const optionsForKind = (kind: 'chat' | 'code') =>
+      AVAILABLE_CHAT_MODELS.filter((model) => getChatModelPresentation(model).kind === kind)
+        .map(downloadableOptionHtml)
+        .join('')
+
+    menu.innerHTML =
+      automaticOptionsHtml +
+      groupHtml('Built in', 'Ready to use, no download', promptApiOptionHtml) +
+      groupHtml('Chat', 'Best for questions and explanations', optionsForKind('chat')) +
+      groupHtml('Code', 'Best for code changes and completions', optionsForKind('code'))
   }
 
   const updateWebInstalledState = (installedModels: ReadonlySet<string>) => {
@@ -1128,10 +1178,17 @@ function setupComposerModelSelector() {
 }
 
 function getChatModelOptionsHtml(selectedModelId: string): string {
-  const optionsHtml = AVAILABLE_CHAT_MODELS.map((model) => {
-    const selected = model.model_id === selectedModelId ? ' selected' : ''
-    return `<option value="${escapeHtml(model.model_id)}"${selected}>${escapeHtml(getChatModelLabel(model))}</option>`
-  }).join('')
+  // Misma agrupación por familia que el menú del chat.
+  const optionsForKind = (kind: 'chat' | 'code') =>
+    AVAILABLE_CHAT_MODELS.filter((model) => getChatModelPresentation(model).kind === kind)
+      .map((model) => {
+        const selected = model.model_id === selectedModelId ? ' selected' : ''
+        return `<option value="${escapeHtml(model.model_id)}"${selected}>${escapeHtml(getChatModelLabel(model))}</option>`
+      })
+      .join('')
+  const optionsHtml =
+    `<optgroup label="Chat models">${optionsForKind('chat')}</optgroup>` +
+    `<optgroup label="Code models">${optionsForKind('code')}</optgroup>`
 
   if (!chromePromptApiModelAvailable) {
     return optionsHtml
@@ -1504,6 +1561,9 @@ function buildMonacoInitOptions(specifiers: string[], workspace: Workspace) {
 // Inicializar editor
 async function initEditor() {
   const editorElement = $('#editor')!
+  // Monaco mide la fuente al crearse. Si la medición usa la fuente de reserva y
+  // la definitiva llega después, todo el texto se recoloca (salto visible).
+  const editorFontReady = loadEditorFont()
   // Solo cargamos el tema ACTIVO en el arranque. Los demás se registran bajo
   // demanda al seleccionarlos (changeTheme → defineTheme), así evitamos 8
   // fetch + parse de JSON en el hilo principal durante el inicio.
@@ -1543,6 +1603,7 @@ async function initEditor() {
   // createActiveTabModel ya usa URI `.ts` (LSP + tipos de imports).
   const initialModel = createActiveTabModel(monaco)
 
+  await editorFontReady
   editor = monaco.editor.create(editorElement, {
     model: initialModel,
     theme: currentSettings.theme,
@@ -1568,6 +1629,11 @@ async function initEditor() {
       verticalScrollbarSize: 8,
       horizontalScrollbarSize: 8,
     },
+    // Sin la línea vertical de la regla de vista general: dentro de la tarjeta
+    // del editor se leía como un divisor extra.
+    overviewRulerBorder: false,
+    // Sin la marca del cursor en la regla lateral: flotaba bajo la barra de pestañas.
+    hideCursorInOverviewRuler: true,
     automaticLayout: true,
     tabSize: 2,
     insertSpaces: true,
@@ -1633,6 +1699,78 @@ async function initEditor() {
 
   // Inicializar el panel de historial de versiones
   initHistoryPanel()
+  void revealWorkbench()
+}
+
+const FONT_LOAD_TIMEOUT_MS = 1000
+const WORKBENCH_REVEAL_TIMEOUT_MS = 2500
+
+function withTimeout(promise: Promise<unknown>, ms: number): Promise<void> {
+  return Promise.race([
+    promise.then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  ])
+}
+
+function loadEditorFont(): Promise<void> {
+  if (!document.fonts?.load) return Promise.resolve()
+  return withTimeout(
+    document.fonts.load(`${currentSettings.fontSize}px "${currentSettings.fontFamily}"`),
+    FONT_LOAD_TIMEOUT_MS,
+  )
+}
+
+// modern-monaco registra el tokenizer TextMate de forma asíncrona al activar el
+// lenguaje; hasta entonces `tokenize` devuelve un único token sin tipo.
+function waitForTokenizer(languageId: string, timeoutMs: number): Promise<void> {
+  const deadline = performance.now() + timeoutMs
+  return new Promise((resolve) => {
+    const check = () => {
+      let ready = false
+      try {
+        ready = (monaco.editor.tokenize('const a = 1', languageId)[0]?.length ?? 0) > 1
+      } catch {
+        // Lenguaje aún no registrado.
+      }
+      if (ready || performance.now() > deadline) resolve()
+      else requestAnimationFrame(check)
+    }
+    check()
+  })
+}
+
+// El script inline de index.html mantiene ocultos pestañas y editor (con su hueco
+// reservado) hasta aquí: se muestran juntos cuando Monaco ya pinta el código
+// coloreado, sin el paso intermedio de texto plano.
+async function revealWorkbench() {
+  const root = document.documentElement
+  if (!('workbenchPending' in root.dataset)) return
+  await waitForTokenizer('typescript', WORKBENCH_REVEAL_TIMEOUT_MS)
+  // Un frame para que el editor re-tokenice las líneas visibles y otro para pintarlas.
+  await waitForNextPaint()
+  delete root.dataset.workbenchPending
+}
+
+const THEME_PALETTE_CACHE_KEY = 'gojs.theme-palette.v1'
+
+// Guarda las variables CSS que el tema y los ajustes fijan en :root. El script
+// inline de index.html las aplica antes del primer frame del siguiente arranque.
+function saveThemePaletteCache() {
+  if (isLandingEmbed) return
+  const root = document.documentElement
+  const vars: Record<string, string> = {}
+  for (let i = 0; i < root.style.length; i++) {
+    const name = root.style[i]
+    if (name.startsWith('--')) vars[name] = root.style.getPropertyValue(name)
+  }
+  try {
+    localStorage.setItem(THEME_PALETTE_CACHE_KEY, JSON.stringify({ theme: currentSettings.theme, vars }))
+  } catch {
+    // Sin almacenamiento: el arranque usa la paleta por defecto.
+  }
 }
 
 // Sincronizar el color de fondo del editor con la consola y header
@@ -1780,7 +1918,6 @@ type UiThemeColors = {
   bgTertiary: string
   border: string
   textPrimary: string
-  textSecondary: string
   accent: string
   accentHover: string
   success: string
@@ -1795,7 +1932,6 @@ const UI_THEME_FALLBACKS: Record<'dark' | 'light', UiThemeColors> = {
     bgTertiary: '#2d2d2d',
     border: '#3e3e3e',
     textPrimary: '#e4e4e4',
-    textSecondary: '#a0a0a0',
     accent: '#4fc3f7',
     accentHover: '#29b6f6',
     success: '#66bb6a',
@@ -1808,7 +1944,6 @@ const UI_THEME_FALLBACKS: Record<'dark' | 'light', UiThemeColors> = {
     bgTertiary: '#f1f1f1',
     border: '#d6d6d6',
     textPrimary: '#24292f',
-    textSecondary: '#57606a',
     accent: '#0969da',
     accentHover: '#0550ae',
     success: '#1a7f37',
@@ -1831,19 +1966,6 @@ function getThemeColor(colors: Record<string, string>, candidates: string[], fal
   return fallback
 }
 
-function isFullyTransparentHex(color: string): boolean {
-  return /^#(?:[0-9a-f]{4}|[0-9a-f]{8})$/i.test(color) && color.endsWith('00')
-}
-
-function getVisibleThemeColor(colors: Record<string, string>, candidates: string[], fallback: string): string {
-  for (const candidate of candidates) {
-    const color = colors[candidate]
-    if (color && !isFullyTransparentHex(color)) return color
-  }
-
-  return fallback
-}
-
 function expandShortHexColor(color: string): string {
   return color
     .replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, '#$1$1$2$2$3$3')
@@ -1858,15 +1980,37 @@ function normalizeMonacoThemeColors(colors: Record<string, string>): Record<stri
   return Object.fromEntries(Object.entries(colors).map(([key, color]) => [key, expandShortHexColor(color)]))
 }
 
+// Contrastes mínimos (WCAG): texto principal holgado (AAA), secundario legible
+// (AA) y acento claramente distinguible del fondo (algo más que el 3:1 de AA,
+// que dejaba pasar grises apagados como el de Monokai).
+const MIN_PRIMARY_TEXT_CONTRAST = 7
+const MIN_TEXT_CONTRAST = 4.5
+const MIN_UI_CONTRAST = 3.5
+
 function applyThemeUiColors(themeName: Theme, themeData: EditorThemeData) {
   const themeType = getThemeType(themeData)
   const fallback = UI_THEME_FALLBACKS[themeType]
   const colors = themeData.colors ?? {}
-  const accent = getVisibleThemeColor(
-    colors,
-    ['button.background', 'textLink.foreground', 'activityBarBadge.background', 'focusBorder'],
-    fallback.accent,
-  )
+  const editorBackground = getThemeColor(colors, ['editor.background'], fallback.bgPrimary)
+  const textPrimary =
+    pickReadableThemeColor(colors, ['foreground', 'editor.foreground'], editorBackground, MIN_PRIMARY_TEXT_CONTRAST) ??
+    getThemeColor(colors, ['editor.foreground', 'foreground'], fallback.textPrimary)
+  const accent =
+    pickReadableThemeColor(
+      colors,
+      ['button.background', 'textLink.foreground', 'activityBarBadge.background', 'focusBorder'],
+      editorBackground,
+      MIN_UI_CONTRAST,
+    ) ?? fallback.accent
+  // Muchos temas usan el color de los comentarios como texto secundario; si no se
+  // lee bien, lo derivamos del texto principal (como el gris de VS Code).
+  const textSecondary =
+    pickReadableThemeColor(
+      colors,
+      ['descriptionForeground', 'tab.inactiveForeground', 'editorLineNumber.foreground', 'disabledForeground'],
+      editorBackground,
+      MIN_TEXT_CONTRAST,
+    ) ?? mixWithMinContrast(textPrimary, editorBackground, 0.7, MIN_TEXT_CONTRAST)
 
   const root = document.documentElement
   root.dataset.theme = themeName
@@ -1894,19 +2038,21 @@ function applyThemeUiColors(themeName: Theme, themeData: EditorThemeData) {
       fallback.border,
     ),
   )
-  root.style.setProperty(
-    '--color-text-primary',
-    getThemeColor(colors, ['foreground', 'editor.foreground'], fallback.textPrimary),
-  )
-  root.style.setProperty(
-    '--color-text-secondary',
-    getThemeColor(
-      colors,
-      ['descriptionForeground', 'editorLineNumber.foreground', 'disabledForeground'],
-      fallback.textSecondary,
-    ),
-  )
+  root.style.setProperty('--color-text-primary', textPrimary)
+  root.style.setProperty('--color-text-secondary', textSecondary)
   root.style.setProperty('--color-accent', accent)
+  root.style.setProperty('--surface-accent-foreground', readableForeground(accent))
+  // Indicador de foco/selección del workbench (pestaña activa, divisores): los
+  // mismos colores que usa VS Code, que en algunos temas difieren del acento.
+  root.style.setProperty(
+    '--wb-active-border',
+    pickReadableThemeColor(
+      colors,
+      ['tab.activeBorderTop', 'tab.activeBorder', 'activityBar.activeBorder', 'focusBorder', 'textLink.foreground'],
+      editorBackground,
+      MIN_UI_CONTRAST,
+    ) ?? accent,
+  )
   root.style.setProperty(
     '--color-accent-hover',
     getThemeColor(colors, ['button.hoverBackground', 'textLink.activeForeground'], fallback.accentHover),
@@ -2058,6 +2204,7 @@ async function changeTheme(themeName: Theme): Promise<boolean> {
 
     // Sincronizar colores del tema para syntax highlighting
     syncThemeColors()
+    saveThemePaletteCache()
 
     console.log('Theme applied successfully:', themeName)
     return true
@@ -2149,6 +2296,15 @@ async function setupNativeMenu() {
 function setupEditorEvents() {
   // Escuchar cambios en el contenido del editor para ejecución automática
   if (editor) {
+    // Barra de estado: posición del cursor (también al cambiar de pestaña).
+    const statusCursor = $('#status-cursor')
+    const syncCursorStatus = () => {
+      const position = editor?.getPosition()
+      if (statusCursor && position) statusCursor.textContent = `Ln ${position.lineNumber}, Col ${position.column}`
+    }
+    editor.onDidChangeCursorPosition(syncCursorStatus)
+    editor.onDidChangeModel(syncCursorStatus)
+
     editor.onDidChangeModelContent(() => {
       // Los tiempos medidos dejan de ser válidos al cambiar el código (se desplazan
       // las líneas), así que los descartamos hasta la próxima ejecución.
@@ -2323,6 +2479,7 @@ function teardownApp() {
 
   // Persistir cualquier cambio de pestaña pendiente (guardado con debounce).
   flushTabsState()
+  saveThemePaletteCache()
   unlistenNativeMenu?.()
   unlistenNativeMenu = null
 
@@ -2737,7 +2894,8 @@ function initHistoryPanel() {
     trigger?.focus()
   }
 
-  historyButton.addEventListener('click', open)
+  // En la activity bar, pulsar el icono del panel abierto lo cierra (como VS Code).
+  historyButton.addEventListener('click', () => (historyPanel.hidden ? open() : close()))
   closeHistory?.addEventListener('click', close)
 
   saveButton?.addEventListener('click', () => {
@@ -2857,6 +3015,15 @@ async function showNodeBuiltinNotice(outputElement: Element, specifiers: string[
   }
 
   outputElement.appendChild(entry)
+}
+
+function setRunStatus(text: string) {
+  const status = $('#status-run')
+  if (status) status.textContent = text
+}
+
+function formatRunDuration(ms: number): string {
+  return ms < 1000 ? `${Math.max(1, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`
 }
 
 // Ejecutar código. `force` re-ejecuta aunque el código no haya cambiado (ejecución
@@ -2991,6 +3158,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
   // can use installed npm dependencies, the full stdlib and native modules.
   if (currentSettings.runtime === 'node') {
     if (await isNativeRuntimeAvailable()) {
+      setRunStatus('')
       await runCodeNative(code, addLog)
       lastExecutionSignature = executionSignature
       return
@@ -3039,6 +3207,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
     initExecutorWorker()
 
     const runWorker = executorWorker!
+    let runStartedAt = 0
 
     // Detiene el executor de esta ejecución. Si otra ejecución ya tomó el relevo
     // sin recrear el worker (p. ej. falló al preparar), lo matamos igualmente para
@@ -3062,6 +3231,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
             `⏱️ Execution stopped: the code exceeded the timeout limit (${EXECUTION_TIMEOUT / 1000}s)`,
           )
           addLog('warn', null, 'Possible infinite loop or code that takes too long to execute')
+          setRunStatus(`Stopped after ${EXECUTION_TIMEOUT / 1000} s`)
         }
         stopRunWorker()
       }, EXECUTION_TIMEOUT)
@@ -3078,6 +3248,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
           // El worker ya cargó: a partir de aquí cuenta el tiempo del código.
           if (executionTimeoutId !== null) clearTimeout(executionTimeoutId)
           executionTimeoutId = null
+          runStartedAt = performance.now()
           startExecutionTimeout()
           break
 
@@ -3100,6 +3271,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
           // Diferenciar entre error de ejecución (con message/stack) y console.error (con data)
           if (message.message) {
             // Error de ejecución del worker
+            setRunStatus(String(message.stack ?? '').startsWith('SyntaxError') ? 'Syntax error' : 'Failed')
             addLog('error', null, `Error: ${message.message}`)
             if (message.stack) {
               addLog('error', null, message.stack)
@@ -3133,6 +3305,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
             clearTimeout(executionTimeoutId)
             executionTimeoutId = null
           }
+          setRunStatus(`Ran in ${formatRunDuration(performance.now() - runStartedAt)}`)
           break
       }
     }
@@ -3189,6 +3362,7 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
       showWorkerLoadNotice(outputElement)
       return
     }
+    setRunStatus('Syntax error')
     addLog('error', null, `Syntax error: ${error.message}`)
     if (error.stack) {
       addLog('error', null, error.stack)
@@ -3294,6 +3468,8 @@ function applyRuntimeUI(runtime: Runtime) {
   browserIcon?.toggleAttribute('hidden', isNode)
   nodeIcon?.toggleAttribute('hidden', !isNode)
   if (label) label.textContent = isNode ? 'Node' : 'Web'
+  const statusRuntime = $('#status-runtime')
+  if (statusRuntime) statusRuntime.textContent = isNode ? 'Node.js' : 'Browser'
   if (toggle) {
     toggle.title = isNode ? 'Runtime: Node.js (native) — click to switch' : 'Runtime: Browser sandbox — click to switch'
     toggle.classList.toggle('is-node', isNode)
@@ -3985,79 +4161,223 @@ function setupOutputInteractions(output: HTMLElement) {
   })
 }
 
+// Demo del landing: "midudev" escribe en el editor real como una persona y la
+// salida responde a cada cambio. Da vueltas mientras la demo está a la vista y
+// se detiene para siempre en cuanto el visitante hace clic, enfoca o escribe.
 async function initShowcaseTyping(): Promise<void> {
   if (!isShowcaseEmbed || !editor || !monaco) return
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
-  let cancelled = false
-  let applyingShowcaseEdit = false
-  const changeDisposable = editor.onDidChangeModelContent(() => {
-    if (!applyingShowcaseEdit) cancelled = true
-  })
-  const cleanup = () => {
-    changeDisposable.dispose()
-  }
-  const applyShowcaseEdit = (edits: Array<Record<string, unknown>>) => {
-    applyingShowcaseEdit = true
-    editor.executeEdits('showcase-typing', edits)
-    applyingShowcaseEdit = false
-  }
+  const ed = editor
+  const m = monaco
+  const model = ed.getModel()
+  if (!model) return
 
-  const wait = (duration: number) =>
-    new Promise<void>((resolve) => window.setTimeout(resolve, duration))
+  const STOPPED = Symbol('showcase-stopped')
+  let stopped = false
+  let visible = true
+  let applying = false
+  // Último código válido que se ejecutó: si el visitante interrumpe a mitad de
+  // una palabra, se le deja este en lugar de un fragmento con errores.
+  let lastValid = SHOWCASE_INITIAL_CODE
 
-  const model = editor.getModel()
-  if (!model) {
-    cleanup()
-    return
-  }
-
-  applyShowcaseEdit([
-    {
-      range: model.getFullModelRange(),
-      text: SHOWCASE_INITIAL_CODE,
-      forceMoveMarkers: true,
-    },
-  ])
-  editor.setPosition(model.getPositionAt(model.getValueLength()))
-  await runCode()
-
-  await wait(450)
-  if (cancelled) {
-    cleanup()
-    return
+  const cursorNode = document.createElement('div')
+  cursorNode.className = 'showcase-cursor'
+  cursorNode.style.height = `${ed.getOption(m.editor.EditorOption.lineHeight)}px`
+  cursorNode.innerHTML = '<span class="showcase-cursor-label">midudev</span>'
+  let cursorPosition = model.getPositionAt(0)
+  const cursorWidget = {
+    allowEditorOverflow: true,
+    getId: () => 'gojs.showcase-cursor',
+    getDomNode: () => cursorNode,
+    getPosition: () => ({
+      position: cursorPosition,
+      preference: [m.editor.ContentWidgetPositionPreference.EXACT],
+    }),
   }
 
-  for (const block of SHOWCASE_TYPING_BLOCKS) {
-    for (const character of block) {
-      if (cancelled) {
-        cleanup()
-        return
-      }
+  const disposables: Array<{ dispose: () => void }> = []
+  const listen = (target: EventTarget, type: string, handler: (event: Event) => void) => {
+    target.addEventListener(type, handler, { capture: true })
+    disposables.push({ dispose: () => target.removeEventListener(type, handler, { capture: true }) })
+  }
 
-      const lineNumber = model.getLineCount()
-      const column = model.getLineMaxColumn(lineNumber)
-      applyShowcaseEdit([
-        {
-          range: new monaco.Range(lineNumber, column, lineNumber, column),
-          text: character,
-          forceMoveMarkers: true,
-        },
-      ])
-      editor.setPosition(model.getPositionAt(model.getValueLength()))
-      await wait(character === '\n' ? 35 : 16)
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    disposables.forEach((disposable) => disposable.dispose())
+    ed.removeContentWidget(cursorWidget)
+    ed.setSelection(new m.Selection(1, 1, 1, 1))
+    if (model.getValue() !== lastValid) {
+      applying = true
+      ed.executeEdits('showcase-typing', [{ range: model.getFullModelRange(), text: lastValid }])
+      applying = false
+      void runCode()
     }
+  }
 
-    // Execute at each valid checkpoint so the output visibly advances with the demo.
+  // Pasar el ratón o hacer scroll no cuenta; un clic, el foco o una tecla, sí.
+  listen(document, 'pointerdown', (event) => {
+    if ((event as PointerEvent).pointerType !== 'touch') stop()
+  })
+  listen(document, 'click', stop)
+  listen(document, 'keydown', stop)
+  disposables.push(ed.onDidFocusEditorText(stop))
+  disposables.push(
+    ed.onDidChangeModelContent(() => {
+      if (!applying) stop()
+    }),
+  )
+  // El landing avisa de si la demo está en pantalla para no escribir a ciegas.
+  listen(window, 'message', (event) => {
+    const { data, origin, source } = event as MessageEvent
+    if (origin !== window.location.origin || source !== window.parent) return
+    if (data?.type === 'gojs-showcase-visibility') visible = Boolean(data.visible)
+  })
+
+  const random = (min: number, max: number) => min + Math.random() * (max - min)
+  const wait = async (duration: number) => {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, duration))
+    while (!stopped && (!visible || document.visibilityState !== 'visible')) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 250))
+    }
+    if (stopped) throw STOPPED
+  }
+  const keyDelay = (character: string) => {
+    if (character === '\n') return random(220, 420)
+    if (/[\s,;)}]/.test(character)) return random(90, 200)
+    return random(45, 120)
+  }
+
+  const moveCursor = (offset: number) => {
+    cursorPosition = model.getPositionAt(offset)
+    ed.setPosition(cursorPosition)
+    ed.layoutContentWidget(cursorWidget)
+    ed.revealPositionInCenterIfOutsideViewport(cursorPosition)
+  }
+  const rangeOf = (start: number, end: number) =>
+    m.Range.fromPositions(model.getPositionAt(start), model.getPositionAt(end))
+  const edit = (start: number, end: number, text: string) => {
+    applying = true
+    ed.executeEdits('showcase-typing', [{ range: rangeOf(start, end), text, forceMoveMarkers: true }])
+    applying = false
+    // La demo decide cuándo ejecutar: así nunca se ve un fragmento a medias.
     if (debounceTimer !== null) {
       clearTimeout(debounceTimer)
       debounceTimer = null
     }
+  }
+  const answer = async () => {
+    lastValid = model.getValue()
     await runCode()
-    await wait(550)
+  }
+  const offsetAfter = (needle: string, from = 0) => {
+    const index = model.getValue().indexOf(needle, from)
+    return index === -1 ? -1 : index + needle.length
   }
 
-  cleanup()
+  // Escribe `text` en `offset`. Con `live`, ejecuta tras cada tecla (solo para
+  // ediciones que son válidas en cada paso, como cambiar un número).
+  const type = async (offset: number, text: string, live = false) => {
+    cursorNode.classList.add('is-typing')
+    for (const character of text) {
+      if (/[a-z]/.test(character) && Math.random() < 0.035) {
+        const typo = 'asdfghjklqwertyuiop'[Math.floor(Math.random() * 19)]
+        edit(offset, offset, typo)
+        moveCursor(offset + 1)
+        await wait(random(160, 320))
+        edit(offset, offset + 1, '')
+        moveCursor(offset)
+        await wait(random(90, 160))
+      }
+      edit(offset, offset, character)
+      offset += character.length
+      moveCursor(offset)
+      if (live) await answer()
+      await wait(keyDelay(character))
+    }
+    cursorNode.classList.remove('is-typing')
+    return offset
+  }
+  const erase = async (start: number, end: number) => {
+    cursorNode.classList.add('is-typing')
+    for (let offset = end; offset > start; offset--) {
+      edit(offset - 1, offset, '')
+      moveCursor(offset - 1)
+      await wait(random(35, 70))
+    }
+    cursorNode.classList.remove('is-typing')
+  }
+  const select = async (start: number, end: number) => {
+    moveCursor(end)
+    ed.setSelection(rangeOf(start, end))
+    await wait(random(380, 620))
+    edit(start, end, '')
+    moveCursor(start)
+    await wait(random(120, 220))
+  }
+  // Sustituye `from` por `to` en la primera aparición tras `anchor`.
+  const replace = async (anchor: string, from: string, to: string, live: boolean) => {
+    const start = model.getValue().indexOf(from, offsetAfter(anchor))
+    if (start === -1) return
+    await select(start, start + from.length)
+    await type(start, to, live)
+    if (!live) await answer()
+  }
+
+  ed.addContentWidget(cursorWidget)
+  applying = true
+  ed.executeEdits('showcase-typing', [{ range: model.getFullModelRange(), text: SHOWCASE_INITIAL_CODE }])
+  applying = false
+  moveCursor(model.getValueLength())
+  await runCode()
+
+  try {
+    await wait(700)
+    for (const block of SHOWCASE_TYPING_BLOCKS) {
+      await type(model.getValueLength(), block)
+      await answer()
+      await wait(random(700, 1100))
+    }
+
+    // Con un impuesto de 1.5 cualquier precio entero da un resultado exacto, así
+    // que la salida nunca enseña ruido de coma flotante (12 * 1.21 sí lo haría
+    // con casi cualquier otro número).
+    const numbers = ['42', '5', '30']
+    for (let round = 0; ; round++) {
+      const number = numbers[round % numbers.length]
+      await wait(random(1400, 2000))
+      await replace('price * ', '1.21', '1.5', false)
+      await wait(random(1200, 1700))
+      // Cambiar un número: la salida responde en cada tecla.
+      await replace('const prices = [12, 19, ', '8', number, true)
+      await wait(random(1200, 1700))
+      // Añadir un precio al array.
+      await type(offsetAfter(`[12, 19, ${number}`), ', 7', true)
+      await wait(random(1300, 1800))
+      // Una línea nueva al final.
+      const end = model.getValueLength()
+      await type(end, '\n\nprices.filter(price => price > 15);')
+      await answer()
+      await wait(random(2600, 3400))
+
+      // Deshacer los cambios para volver a empezar.
+      await erase(end, model.getValueLength())
+      await answer()
+      await wait(random(700, 1000))
+      const extra = model.getValue().indexOf(', 7]')
+      if (extra !== -1) {
+        await erase(extra, extra + 3)
+        await answer()
+      }
+      await wait(random(600, 900))
+      await replace('const prices = [12, 19, ', number, '8', true)
+      await wait(random(600, 900))
+      await replace('price * ', '1.5', '1.21', false)
+    }
+  } catch (error) {
+    if (error !== STOPPED) throw error
+  }
 }
 
 async function initAgentDemo(): Promise<void> {
@@ -4233,7 +4553,6 @@ async function start() {
 
       layoutHorizontalIcon.toggleAttribute('hidden', !isHorizontal)
       layoutVerticalIcon.toggleAttribute('hidden', isHorizontal)
-      layoutToggleButton.title = label
       layoutToggleButton.setAttribute('aria-label', label)
       layoutToggleButton.setAttribute('aria-pressed', String(isHorizontal))
 
@@ -4277,9 +4596,12 @@ async function start() {
     const syncAutorunUI = () => {
       pauseIcon.toggleAttribute('hidden', !autoRunEnabled)
       playIcon.toggleAttribute('hidden', autoRunEnabled)
-      autorunToggleButton.title = autoRunEnabled
-        ? 'Auto-run enabled (click to disable)'
-        : 'Auto-run disabled (click to enable)'
+      // Un solo tooltip (el popover): sin `title`, el navegador no pinta otro encima.
+      const label = autoRunEnabled ? 'Pause auto-run' : 'Resume auto-run'
+      autorunToggleButton.setAttribute('aria-label', label)
+      autorunToggleButton.setAttribute('aria-pressed', String(autoRunEnabled))
+      const tooltip = document.getElementById('tooltip-autorun')
+      if (tooltip) tooltip.textContent = `${label} (run manually with ${isMacPlatform() ? '⌘' : 'Ctrl+'}Enter)`
     }
 
     syncAutorunUI()
@@ -4298,22 +4620,66 @@ async function start() {
   const chatbotPanel = document.getElementById('chatbot-panel')
   let aiEnabled = currentSettings.aiEnabled
 
+  // Visibilidad de los paneles. En escritorio se ven todos (el chat solo con la
+  // IA activa). En móvil, tres paneles apilados se quedaban en ~9 líneas cada uno:
+  // se muestra una sola vista a pantalla completa (código, salida o chat), elegida
+  // desde la barra inferior. Los embeds del landing conservan su layout.
+  const mobileViewQuery = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY)
+  const usesMobileViews = () => mobileViewQuery.matches && !isLandingEmbed
+  type MobileView = 'editor' | 'output' | 'chat'
+  let mobileView: MobileView = 'editor'
+  const viewPanels: Array<[MobileView, HTMLElement | null]> = [
+    ['editor', $('.editor-panel') as HTMLElement | null],
+    ['output', $('.output-panel') as HTMLElement | null],
+    ['chat', chatbotPanel],
+  ]
+  const mobileViewButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.mobile-view-item'))
+
+  // Editor y salida solo se tocan una vez usadas las vistas de móvil: en
+  // escritorio manda el estado inicial (p. ej. el demo del agente oculta la
+  // salida por CSS y forzarla visible le reservaba un hueco vacío).
+  let managesEditorAndOutput = false
+  const syncWorkbenchPanels = () => {
+    if (mobileView === 'chat' && !aiEnabled) mobileView = 'editor'
+    const mobile = usesMobileViews()
+    managesEditorAndOutput ||= mobile
+    for (const [view, panel] of viewPanels) {
+      if (!panel) continue
+      if (view !== 'chat' && !managesEditorAndOutput) continue
+      const available = view !== 'chat' || aiEnabled
+      const visible = available && (!mobile || view === mobileView)
+      if (resizePanelsElement?.setPanelVisible) resizePanelsElement.setPanelVisible(panel, visible)
+      else panel.toggleAttribute('hidden', !visible)
+    }
+    for (const button of mobileViewButtons) {
+      button.setAttribute('aria-pressed', String(button.dataset.view === mobileView))
+      button.hidden = button.dataset.view === 'chat' && !aiEnabled
+    }
+  }
+
+  for (const button of mobileViewButtons) {
+    button.addEventListener('click', () => {
+      mobileView = (button.dataset.view as MobileView) ?? 'editor'
+      syncWorkbenchPanels()
+    })
+  }
+  mobileViewQuery.addEventListener('change', syncWorkbenchPanels)
+
   if (aiToggleButton && robotIcon && robotOffIcon && chatbotPanel) {
     const syncAiToggleUI = () => {
       robotIcon.toggleAttribute('hidden', !aiEnabled)
       robotOffIcon.toggleAttribute('hidden', aiEnabled)
-      aiToggleButton.title = aiEnabled ? 'AI enabled (click to disable)' : 'AI disabled (click to enable)'
+      const aiLabel = aiEnabled ? 'Turn off the AI assistant' : 'Turn on the AI assistant'
+      aiToggleButton.setAttribute('aria-label', aiLabel)
       aiToggleButton.setAttribute('aria-pressed', String(aiEnabled))
+      const aiTooltip = document.getElementById('tooltip-ai')
+      if (aiTooltip) aiTooltip.textContent = aiLabel
 
       // Clear the legacy visibility class so a Tauri HMR session cannot keep
       // forcing `display: none !important` after the new `hidden` state changes.
       chatbotPanel.classList.remove('hidden')
 
-      if (resizePanelsElement?.setPanelVisible) {
-        resizePanelsElement.setPanelVisible(chatbotPanel, aiEnabled)
-      } else {
-        chatbotPanel.toggleAttribute('hidden', !aiEnabled)
-      }
+      syncWorkbenchPanels()
     }
 
     syncAiToggleUI()
@@ -4366,7 +4732,7 @@ async function start() {
       settingsTrigger?.focus()
     }
 
-    settingsButton.addEventListener('click', openPanel)
+    settingsButton.addEventListener('click', () => (settingsPanel.hidden ? openPanel() : closePanel()))
     closeSettings?.addEventListener('click', closePanel)
 
     document.addEventListener('keydown', (e) => {
@@ -5085,6 +5451,17 @@ async function initChatbot() {
       sendChatMessage()
     })
 
+    // Sugerencias del estado vacío: rellenan el composer y envían.
+    document.querySelector('.chatbot-suggestions')?.addEventListener('click', (event) => {
+      const suggestion = (event.target as HTMLElement).closest<HTMLButtonElement>('.chatbot-suggestion')
+      const prompt = suggestion?.dataset.prompt
+      if (!prompt || chatbotInput.disabled) return
+      chatbotInput.value = prompt
+      resizeChatbotInput()
+      syncComposerActionState()
+      sendChatMessage()
+    })
+
     chatbotQueueToggle.addEventListener('click', () => {
       chatQueueCollapsed = !chatQueueCollapsed
       renderChatQueue()
@@ -5124,6 +5501,7 @@ async function initChatbot() {
     // Limpiar conversación
     chatbotClear.addEventListener('click', () => {
       chatbot.clearHistory()
+      agentHistory = []
       chatQueue = []
       renderChatQueue()
       if (chatbotMessages) {
@@ -5484,23 +5862,31 @@ async function initChatbot() {
       format: (code: string) => formatCode(code, currentSettings.prettier),
     }
 
-    const fullMessage = item.selection
-      ? `${formatSelectionContext(item.selection)}\n\n${item.message}`
-      : item.message
+    let finalMarkdown: string | null = null
 
     try {
-      await runAgent(fullMessage, {
-        generate: (messages, onChunk) => chatbot.generate(messages, onChunk),
+      // La selección va como contexto aparte: así no cuenta para detectar si el
+      // usuario pide un cambio o hace una pregunta.
+      await runAgent(item.message, {
+        generate: (messages, onChunk, options) => chatbot.generate(messages, onChunk, options),
         bridge,
-        maxSteps: 6,
+        maxSteps: 4,
+        context: item.selection ? formatSelectionContext(item.selection) : undefined,
+        history: agentHistory,
         ui: {
           status: showStatus,
           clearStatus,
           edit: renderAgentEdit,
           run: renderAgentRun,
-          finalAnswer: renderAssistantMarkdown,
+          finalAnswer: (markdown) => {
+            finalMarkdown = markdown
+            renderAssistantMarkdown(markdown)
+          },
         },
       })
+      if (finalMarkdown) {
+        agentHistory = [...agentHistory, { user: item.message, assistant: finalMarkdown }].slice(-AGENT_HISTORY_LIMIT)
+      }
     } catch (error: any) {
       console.error('Error running agent:', error)
       clearStatus()

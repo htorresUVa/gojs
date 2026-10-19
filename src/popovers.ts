@@ -4,12 +4,14 @@ export function initHeaderPopovers() {
   const layoutToggleButton = document.getElementById('layout-toggle-button') as HTMLElement | null
   const settingsButton = document.getElementById('settings-button') as HTMLElement | null
   const issueButton = document.getElementById('issue-button') as HTMLElement | null
+  const historyButton = document.getElementById('history-button') as HTMLElement | null
 
   const tooltipAutorun = document.getElementById('tooltip-autorun') as HTMLElement | null
   const tooltipAI = document.getElementById('tooltip-ai') as HTMLElement | null
   const tooltipLayout = document.getElementById('tooltip-layout') as HTMLElement | null
   const tooltipSettings = document.getElementById('tooltip-settings') as HTMLElement | null
   const tooltipIssue = document.getElementById('tooltip-issue') as HTMLElement | null
+  const tooltipHistory = document.getElementById('tooltip-history') as HTMLElement | null
 
   const attachHintTooltip = (button: HTMLElement | null, tooltip: HTMLElement | null) => {
     if (!button || !tooltip) return
@@ -22,6 +24,23 @@ export function initHeaderPopovers() {
       const tipRect = tooltip.getBoundingClientRect()
       const margin = 8
       const halfWidth = tipRect.width / 2
+
+      // En la activity bar el tooltip va hacia dentro de la ventana: a la
+      // izquierda si la barra es vertical (escritorio) o encima si es la barra
+      // inferior de móvil.
+      const activityBar = button.closest('.activity-bar')
+      if (activityBar) {
+        const isVertical = getComputedStyle(activityBar).flexDirection === 'column'
+        if (isVertical) {
+          tooltip.style.left = `${btnRect.left - 6 - halfWidth}px`
+          tooltip.style.top = `${btnRect.top + (btnRect.height - tipRect.height) / 2}px`
+          return
+        }
+        const centerX = Math.max(margin + halfWidth, Math.min(btnRect.left + btnRect.width / 2, window.innerWidth - margin - halfWidth))
+        tooltip.style.left = `${centerX}px`
+        tooltip.style.top = `${btnRect.top - 6 - tipRect.height}px`
+        return
+      }
 
       let centerX = btnRect.left + btnRect.width / 2
       // Evitar que el tooltip se salga por los bordes de la ventana
@@ -66,4 +85,5 @@ export function initHeaderPopovers() {
   attachHintTooltip(layoutToggleButton, tooltipLayout)
   attachHintTooltip(settingsButton, tooltipSettings)
   attachHintTooltip(issueButton, tooltipIssue)
+  attachHintTooltip(historyButton, tooltipHistory)
 }
