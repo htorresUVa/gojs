@@ -19,6 +19,11 @@
        does not flash white before the stylesheet loads. -->
   <style>
     html { background-color: #121212; color-scheme: dark; }
+    /* Workbench chrome color. It lives here (not in style.css) because the app
+       shell must paint it on the very first frame. */
+    :root { --wb-bg: color-mix(in srgb, var(--editor-background, #282a36) 80%, #000); }
+    :root[data-theme-type='light'] { --wb-bg: color-mix(in srgb, var(--editor-background, #ffffff) 95%, #000); }
+    html[data-shell='app'] { background-color: var(--wb-bg); }
     html:not([data-styles-ready]) body { visibility: hidden; }
     html:not([data-styles-ready]) .site-header { transition: none !important; }
     html[data-shell='app'] #landing,
@@ -29,14 +34,26 @@
       var isDesktop = '__TAURI_INTERNALS__' in window
       var isPlaygroundRoute = location.pathname.indexOf('/app') === 0
       document.documentElement.dataset.shell = isDesktop || isPlaygroundRoute ? 'app' : 'landing'
+      // The landing restores its own scroll position once its stylesheet is in
+      // (see entry.ts). The browser would restore it against the unstyled page
+      // and land somewhere else.
+      if (!isDesktop && !isPlaygroundRoute && 'scrollRestoration' in history) history.scrollRestoration = 'manual'
     })()
   </script>
+  <link rel="preload" href="/fonts/jetbrains-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/src/fonts.css" />
-  <!-- Theme anti-flash: before painting, read the saved theme and apply its real
-       background color so there is no dark-to-light (or light-to-dark) jump
-       while the editor and its theme finish loading. -->
+  <!-- Theme anti-flash: before painting, apply the saved theme's real UI palette
+       (cached by main.ts after each theme change) so the first frame already has
+       the final colors. Tabs and the editor stay hidden until Monaco paints
+       highlighted code; main.ts reveals them all at once. -->
   <script>
     (function () {
+      var root = document.documentElement
+      if (root.dataset.shell !== 'app') return
+      root.dataset.workbenchPending = ''
+      setTimeout(function () { delete root.dataset.workbenchPending }, 4000)
+
+      var DEFAULT_THEME = 'dracula'
       var BG = {
         'vitesse-dark': ['#121212', 'dark'],
         'vitesse-light': ['#ffffff', 'light'],
@@ -48,21 +65,57 @@
         'tokyo-night': ['#1a1b26', 'dark'],
         'one-dark-pro': ['#282c34', 'dark']
       }
+      // Default theme palette, so first-time visitors also get final colors.
+      var DEFAULT_PALETTE = {
+        '--editor-background': 'rgb(40, 42, 54)',
+        '--color-bg-primary': '#282A36',
+        '--color-bg-secondary': '#21222C',
+        '--color-bg-tertiary': '#282A36',
+        '--color-border': '#191A21',
+        '--color-text-primary': '#F8F8F2',
+        '--color-text-secondary': '#bababa',
+        '--color-accent': '#FF79C6',
+        '--wb-active-border': '#FF79C6',
+        '--color-accent-hover': '#29b6f6',
+        '--color-success': '#50FA7B',
+        '--color-error': '#FF5555',
+        '--color-warning': '#F1FA8C',
+        '--color-info': '#BD93F9',
+        '--editor-scrollbar-thumb': 'rgba(121, 121, 121, 0.4)',
+        '--editor-scrollbar-thumb-hover': 'rgba(100, 100, 100, 0.7)',
+        '--editor-scrollbar-thumb-active': 'rgba(191, 191, 191, 0.4)',
+        '--console-text-primary': '#F8F8F2',
+        '--console-text-secondary': '#6272A4',
+        '--editor-line-number-foreground': '#6272A4',
+        '--theme-string': '#F1FA8C',
+        '--theme-number': '#BD93F9',
+        '--theme-keyword': '#FF79C6',
+        '--theme-comment': '#6272A4',
+        '--theme-function': '#50FA7B',
+        '--theme-boolean': '#FF79C6',
+        '--theme-property': '#8BE9FD',
+        '--theme-mtk14': 'rgb(189, 147, 249)',
+        '--surface-accent-foreground': '#000000'
+      }
       try {
         var embedMode = new URLSearchParams(location.search).get('embed')
         var isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase' || embedMode === 'agent-demo'
-        var theme = isLandingEmbed ? 'dracula' : 'vitesse-dark'
+        if (isLandingEmbed) root.dataset.embed = embedMode
+        var theme = DEFAULT_THEME
         var raw = localStorage.getItem('xjs-settings')
         if (raw && !isLandingEmbed) {
           var saved = JSON.parse(raw)
           if (saved && typeof saved.theme === 'string' && BG[saved.theme]) theme = saved.theme
         }
         var entry = BG[theme]
-        var root = document.documentElement
-        root.style.setProperty('--editor-background', entry[0])
-        root.style.setProperty('--color-bg-primary', entry[0])
-        root.style.backgroundColor = entry[0]
+        var vars = { '--editor-background': entry[0], '--color-bg-primary': entry[0] }
+        var cached = JSON.parse(localStorage.getItem('gojs.theme-palette.v1') || 'null')
+        if (cached && !isLandingEmbed && cached.theme === theme && cached.vars) vars = cached.vars
+        else if (theme === DEFAULT_THEME) vars = DEFAULT_PALETTE
+        root.dataset.theme = theme
+        root.dataset.themeType = entry[1]
         root.style.colorScheme = entry[1]
+        for (var name in vars) root.style.setProperty(name, vars[name])
       } catch (e) {}
     })()
   </script>
@@ -107,7 +160,7 @@
   <div id="landing">
     <header class="site-header">
       <a class="brand" href="/" aria-label="GoJS home">
-        <img src="/gojs.webp" alt="" width="34" height="34">
+        <img src="/gojs.webp" alt="" width="30" height="30">
         <span>gojs<span class="brand-cursor">_</span></span>
       </a>
       <nav class="site-nav" aria-label="Main navigation">
@@ -122,90 +175,83 @@
 
     <main>
       <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-field" aria-hidden="true"><canvas></canvas></div>
         <div class="hero-copy">
-          <p class="eyebrow reveal">Free. Open source. Yours.</p>
-          <h1 id="hero-title" class="reveal reveal-delay-1">
-            Write JavaScript.<br><span>See the answer.</span>
+          <h1 id="hero-title" class="intro">
+            Write JavaScript.<br><span class="hero-answer">See the <span class="nowrap">answer.<i class="pixel-cursor" aria-hidden="true"></i></span></span>
           </h1>
-          <p class="hero-description reveal reveal-delay-2">
-            A scratchpad that answers back. Values beside your code, timings on every statement,
-            TypeScript intelligence, real Node.js, and AI that runs locally.
+          <p class="hero-description intro intro-delay-1">
+            A free, open-source scratchpad that answers back. Values beside your code, timings on every
+            statement, TypeScript intelligence, real Node.js, and AI that runs on your machine.
           </p>
-          <div class="hero-actions reveal reveal-delay-3">
-            <a class="button button-primary" href="/app/">Start coding <span aria-hidden="true">→</span></a>
-            <a id="download-cta" class="button button-secondary" href="#desktop">
-              <span id="download-label">Desktop app coming soon</span><span aria-hidden="true">↓</span>
+          <div class="hero-actions intro intro-delay-2">
+            <a class="button button-primary" href="/app/">Start coding <svg class="pixel-arrow" viewBox="0 0 7 7" aria-hidden="true"><path d="M0 3h6v1H0zM3 1h1v1H3zM4 2h1v1H4zM4 4h1v1H4zM3 5h1v1H3z"/></svg></a>
+            <a id="download-cta" class="button button-outline" href="#desktop">
+              <svg class="pixel-download" viewBox="0 0 7 7" aria-hidden="true"><path d="M3 0h1v5H3zM1 3h1v1H1zM5 3h1v1H5zM2 4h1v1H2zM4 4h1v1H4zM3 5h1v1H3zM0 6h7v1H0z"/></svg><span id="download-label">Download the desktop app</span>
             </a>
           </div>
-          <p id="download-meta" class="download-meta reveal reveal-delay-3">
-            Desktop downloads are not available yet · Coming soon for macOS, Windows, and Linux
+          <p id="download-meta" class="hero-note intro intro-delay-2">
+            Free for macOS, Windows, and Linux · <a href="#desktop">All downloads</a>
           </p>
         </div>
 
-        <div class="product-stage reveal reveal-delay-2" id="playground">
-          <div class="stage-label" aria-hidden="true">LIVE / EDITABLE / REAL</div>
+        <div class="product-stage intro intro-delay-1" id="playground">
           <div class="app-window">
             <div class="demo-chrome">
-              <span class="traffic-lights"><i></i><i></i><i></i></span>
-              <a href="/app/">Open full app ↗</a>
-            </div>
-            <div id="showcase-loader" class="showcase-loader">
-              <div class="loader-code" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-              <p>Loading the real playground…</p>
-              <button id="showcase-load" type="button">Load interactive demo</button>
+              <span class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+              <p>Edit a number. Every expression answers back.</p>
+              <a href="/app/">Open full app <span aria-hidden="true">↗</span></a>
             </div>
             <iframe id="showcase-frame" class="live-app-frame" data-src="/app/?embed=showcase"
               title="Interactive GoJS playground" loading="lazy"></iframe>
           </div>
-          <p class="stage-note">Edit a number. The code runs. Every expression answers back.</p>
         </div>
       </section>
 
       <section class="manifesto" aria-label="Product promise">
-        <p>NO LICENSE KEY.</p><p>NO CLOUD REQUIRED.</p><p>NO CONTEXT SWITCHING.</p>
+        <p>No license key.</p><p>No cloud required.</p><p>No context switching.</p>
       </section>
 
-      <section class="language-support reveal" aria-labelledby="language-support-title">
-        <header>
-          <p class="section-kicker">ONE LAB. THE WHOLE ECOSYSTEM.</p>
-          <h2 id="language-support-title">JavaScript at the core.<br>Everything else <em>included.</em></h2>
-        </header>
-        <div class="language-logos">
-          <article class="language-item language-js">
-            <span>01</span>
-            <img src="/language-javascript.svg" alt="JavaScript" width="180" height="180">
-            <div><strong>JavaScript</strong><small>Instant browser sandbox</small></div>
+      <section class="languages" aria-labelledby="languages-title">
+        <h2 id="languages-title">JavaScript at the core.<br><span>Everything else included.</span></h2>
+        <div class="language-grid">
+          <article class="language-item">
+            <div class="pixel-logo">
+              <img src="/language-javascript.svg" alt="JavaScript logo" width="160" height="160">
+              <canvas aria-hidden="true"></canvas>
+            </div>
+            <h3>JavaScript</h3>
+            <p>Runs instantly in a browser sandbox.</p>
           </article>
-          <article class="language-item language-ts">
-            <span>02</span>
-            <img src="/language-typescript.svg" alt="TypeScript" width="180" height="180">
-            <div><strong>TypeScript</strong><small>Types and IntelliSense built in</small></div>
+          <article class="language-item">
+            <div class="pixel-logo">
+              <img src="/language-typescript.svg" alt="TypeScript logo" width="160" height="160">
+              <canvas aria-hidden="true"></canvas>
+            </div>
+            <h3>TypeScript</h3>
+            <p>Types and IntelliSense, no config.</p>
           </article>
-          <article class="language-item language-node">
-            <span>03</span>
-            <img src="/language-nodejs.svg" alt="Node.js" width="180" height="205">
-            <div><strong>Node.js</strong><small>Native runtime on desktop</small></div>
+          <article class="language-item">
+            <div class="pixel-logo">
+              <img src="/language-nodejs.svg" alt="Node.js logo" width="160" height="182">
+              <canvas aria-hidden="true"></canvas>
+            </div>
+            <h3>Node.js</h3>
+            <p>A native runtime on desktop.</p>
           </article>
         </div>
       </section>
 
-      <section class="story" id="features" aria-labelledby="features-title">
-        <header class="section-heading reveal">
-          <p class="section-kicker">THE DISTANCE BETWEEN IDEA AND ANSWER: ZERO.</p>
-          <h2 id="features-title">A lab for the code<br>that is not a project <em>yet.</em></h2>
-        </header>
-
-        <article class="feature-row feature-inline reveal">
-          <div class="feature-index">01</div>
+      <section class="features" id="features" aria-label="Why GoJS">
+        <article class="feature feature-inline">
           <div class="feature-copy">
-            <p class="feature-overline">BROWSER SANDBOX</p>
+            <p class="feature-label">// browser sandbox</p>
             <h3>Every line<br>answers back.</h3>
             <p>Top-level expressions reveal their values automatically. Statement timings live in the gutter.
               No logging ritual. No guessing what happened.</p>
           </div>
           <div class="code-specimen" aria-label="Example of inline results">
-            <div class="specimen-head"><span>experiment.ts</span><span>AUTO-RUN · ON</span></div>
+            <div class="specimen-head"><span>experiment.ts</span><span class="specimen-status">auto-run on</span></div>
             <ol>
               <li><code><b>const</b> prices = [12, 19, 8]</code><output>0.1 ms</output></li>
               <li><code>prices.map(n <i>=&gt;</i> n * 1.21)</code><output>[14.52, 22.99, 9.68]</output></li>
@@ -215,19 +261,17 @@
           </div>
         </article>
 
-        <article class="feature-row feature-node reveal">
-          <div class="feature-index">02</div>
+        <article class="feature feature-node">
           <div class="feature-copy">
-            <p class="feature-overline">GOJS DESKTOP</p>
-            <h3>Browser speed.<br><span>Real Node power.</span></h3>
+            <p class="feature-label">// gojs desktop</p>
+            <h3>Browser speed.<br>Real Node power.</h3>
             <p>Start in an isolated Web Worker. Switch to the bundled Node.js 26 runtime when you need files,
               processes, networking, or actual npm packages.</p>
-            <ul class="feature-points">
-              <li>Native filesystem access</li><li>A real npm workspace</li><li>macOS, Windows, and Linux</li>
-            </ul>
           </div>
-          <div class="runtime-terminal">
-            <div class="runtime-tabs"><span>Browser</span><span class="active">Node.js 26</span></div>
+          <div class="runtime-terminal" data-runtime="node">
+            <div class="runtime-tabs" aria-hidden="true">
+              <span class="runtime-tab-browser">Browser</span><span class="runtime-tab-node">Node.js 26</span>
+            </div>
             <pre><code><i>import</i> { readFile } <i>from</i> <b>'node:fs/promises'</b>
 
 <i>const</i> packageJson = JSON.parse(
@@ -235,21 +279,23 @@
 )
 
 packageJson.name</code></pre>
-            <div class="terminal-result"><span>↳</span> "my-experiment" <small>2.4 ms</small></div>
+            <div class="terminal-result">
+              <p class="result-browser">node:fs needs the Node.js runtime</p>
+              <p class="result-node"><span>"my-experiment"</span><small>2.4 ms</small></p>
+            </div>
           </div>
         </article>
 
-        <article class="feature-row feature-ai reveal">
-          <div class="feature-index">03</div>
+        <article class="feature feature-ai">
           <div class="feature-copy">
-            <p class="feature-overline">LOCAL AI</p>
-            <h3>AI that stays<br>with <span>you.</span></h3>
+            <p class="feature-label">// local ai</p>
+            <h3>AI that stays<br>with you.</h3>
             <p>Explain, refactor, and fix code with on-device models. GoJS supports Chrome's Prompt API,
               WebLLM in the browser, and llama.cpp on desktop.</p>
-            <p class="honesty-note">Model download requires a network connection once. Inference then happens on your machine.</p>
+            <p class="feature-footnote">Models download once. After that, inference happens on your machine.</p>
           </div>
           <div class="ai-specimen">
-            <div class="agent-demo-label" aria-hidden="true">SIMULATED AGENT · REAL GOJS UI</div>
+            <div class="agent-demo-label" aria-hidden="true">Simulated agent, real GoJS UI</div>
             <div id="agent-demo-loader" class="agent-demo-loader">
               <div class="loader-code" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
               <p>Preparing the local agent…</p>
@@ -259,143 +305,131 @@ packageJson.name</code></pre>
           </div>
         </article>
 
-        <article class="feature-row feature-history reveal">
-          <div class="feature-index">04</div>
+        <article class="feature feature-history">
           <div class="feature-copy">
-            <p class="feature-overline">WORKSPACE MEMORY</p>
+            <p class="feature-label">// workspace memory</p>
             <h3>Experiments<br>with a memory.</h3>
             <p>Tabs survive reloads. Runs become versions. Compare a diff, restore an idea, and keep moving
               without turning every thought into a repository.</p>
           </div>
-          <div class="history-specimen">
-            <div><span class="commit-dot"></span><strong>Current</strong><small>just now</small><em>+4 −1</em></div>
-            <div><span class="commit-dot"></span><strong>Auto snapshot</strong><small>2 min ago</small><em>+8 −3</em></div>
-            <div><span class="commit-dot"></span><strong>First run</strong><small>8 min ago</small><em>initial</em></div>
-          </div>
+          <ol class="history-specimen" aria-label="Example version history">
+            <li><strong>Current</strong><small>just now</small><em>+4 −1</em></li>
+            <li><strong>Auto snapshot</strong><small>2 min ago</small><em>+8 −3</em></li>
+            <li><strong>First run</strong><small>8 min ago</small><em>initial</em></li>
+          </ol>
         </article>
       </section>
 
-      <section class="open-source-section reveal" aria-labelledby="open-title">
-        <div class="oss-mark" aria-hidden="true">{ }</div>
-        <div>
-          <p class="section-kicker">FREE MEANS FREE</p>
-          <h2 id="open-title">The best tool should not<br>be another subscription.</h2>
-          <p>Every feature. Every platform. No account and no artificial limits. Inspect the code,
-            report a bug, or build the feature you want next.</p>
-        </div>
-        <a class="github-card" href="https://github.com/midudev/gojs" target="_blank" rel="noopener noreferrer">
-          <span>github.com/midudev/gojs</span><strong>View the source</strong><i>MIT LICENSE ↗</i>
-        </a>
-      </section>
-
-      <section class="pricing-section reveal" id="pricing" aria-labelledby="pricing-title">
+      <section class="pricing" id="pricing" aria-labelledby="pricing-title">
         <header class="pricing-heading">
-          <div>
-            <p class="section-kicker">RADICALLY SIMPLE PRICING</p>
-            <h2 id="pricing-title">Choose your plan.<br><em>They all cost nothing.</em></h2>
-          </div>
+          <h2 id="pricing-title">Choose your plan.<br><span>They all cost nothing.</span></h2>
           <p>No trials, locked features, usage limits, or surprise invoices. GoJS is free and open
-            source—and it is staying that way.</p>
+            source, and it is staying that way.</p>
         </header>
 
         <div class="pricing-grid">
-          <article class="pricing-card">
-            <div class="pricing-card-head">
-              <span>AVAILABLE NOW</span>
-            </div>
+          <article class="plan">
+            <p class="plan-status">Available now</p>
             <h3>Browser</h3>
-            <div class="price"><strong>0<span class="price-currency">€</span></strong><small>forever</small></div>
+            <p class="price"><strong>0€</strong><small>forever</small></p>
             <p>Open the playground and start experimenting immediately.</p>
             <ul>
               <li>JavaScript and TypeScript</li>
               <li>Inline values and timings</li>
               <li>Local browser AI</li>
             </ul>
-            <a class="button button-primary pricing-button" href="/app/">Start coding <span aria-hidden="true">→</span></a>
+            <a class="button button-primary" href="/app/">Start coding <svg class="pixel-arrow" viewBox="0 0 7 7" aria-hidden="true"><path d="M0 3h6v1H0zM3 1h1v1H3zM4 2h1v1H4zM4 4h1v1H4zM3 5h1v1H3z"/></svg></a>
           </article>
 
-          <article class="pricing-card pricing-card-featured">
-            <div class="pricing-card-head">
-              <span>COMING SOON</span>
-            </div>
+          <article class="plan plan-featured">
+            <p class="plan-status">Available now</p>
             <h3>Native</h3>
-            <div class="price"><strong>0<span class="price-currency">€</span></strong><small>forever</small></div>
+            <p class="price"><strong>0€</strong><small>forever</small></p>
             <p>Everything in the browser, plus the power of your machine.</p>
             <ul>
               <li>Native Node.js runtime</li>
               <li>Local files and npm packages</li>
               <li>On-device AI models</li>
             </ul>
-            <span class="button pricing-button pricing-button-disabled" aria-disabled="true">Free download coming soon</span>
+            <a class="button button-primary" href="#desktop">Download for free <svg class="pixel-download" viewBox="0 0 7 7" aria-hidden="true"><path d="M3 0h1v5H3zM1 3h1v1H1zM5 3h1v1H5zM2 4h1v1H2zM4 4h1v1H4zM3 5h1v1H3zM0 6h7v1H0z"/></svg></a>
           </article>
 
-          <article class="pricing-card">
-            <div class="pricing-card-head">
-              <span>MIT LICENSE</span>
-            </div>
+          <article class="plan">
+            <p class="plan-status">MIT license</p>
             <h3>Everything</h3>
-            <div class="price"><strong>0<span class="price-currency">€</span></strong><small>forever</small></div>
+            <p class="price"><strong>0€</strong><small>forever</small></p>
             <p>Use it, inspect it, change it, and build on top of it.</p>
             <ul>
               <li>Every feature included</li>
               <li>No account or license key</li>
               <li>Source code on GitHub</li>
             </ul>
-            <a class="button button-secondary pricing-button" href="https://github.com/midudev/gojs"
-              target="_blank" rel="noopener noreferrer">View the source <span aria-hidden="true">↗</span></a>
+            <a class="button button-outline" href="https://github.com/midudev/gojs" target="_blank"
+              rel="noopener noreferrer"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> View the source</a>
           </article>
         </div>
 
-        <div class="sponsor-strip">
-          <div>
-            <p>WANT TO PAY ANYWAY?</p>
-            <strong>Pay whatever GoJS is worth to you.</strong>
-            <span>Entirely optional. The product remains free for everyone.</span>
-          </div>
-          <a class="button button-light" href="https://github.com/sponsors/midudev" target="_blank"
-            rel="noopener noreferrer">Sponsor midudev <span aria-hidden="true">♥</span></a>
+        <div class="sponsor">
+          <p><strong>Want to pay anyway?</strong> Sponsor midudev with whatever GoJS is worth to you.
+            Entirely optional. The product stays free for everyone.</p>
+          <a class="button button-outline" href="https://github.com/sponsors/midudev" target="_blank"
+            rel="noopener noreferrer">Sponsor <span aria-hidden="true">♥</span></a>
         </div>
       </section>
 
-      <section class="desktop-section reveal" id="desktop" aria-labelledby="desktop-title">
+      <section class="desktop" id="desktop" aria-labelledby="desktop-title">
         <div class="desktop-copy">
-          <p class="section-kicker">DESKTOP APP · COMING SOON</p>
-          <h2 id="desktop-title">Your machine.<br>Your runtime. <em>Your code.</em></h2>
-          <p>The desktop app is not available yet. Soon, you will be able to go beyond the browser
-            with native Node.js, npm, local files, and on-device AI.</p>
+          <p class="feature-label">// available now</p>
+          <h2 id="desktop-title">Your machine.<br>Your runtime.<br><span>Your code.</span></h2>
+          <p>Go beyond the browser with native Node.js, npm, local files, and on-device AI.</p>
           <div class="desktop-actions">
-            <span id="download-cta-bottom" class="button button-light" aria-disabled="true">
-              <span id="download-label-bottom">Downloads coming soon</span>
+            <a id="download-cta-bottom" class="button button-primary" href="https://github.com/midudev/gojs/releases/latest" target="_blank"
+              rel="noopener noreferrer"><span id="download-label-bottom">See all downloads</span> <svg class="pixel-download" viewBox="0 0 7 7" aria-hidden="true"><path d="M3 0h1v5H3zM1 3h1v1H1zM5 3h1v1H5zM2 4h1v1H2zM4 4h1v1H4zM3 5h1v1H3zM0 6h7v1H0z"/></svg></a>
+            <a class="button button-outline" href="/app/">Use the web app</a>
+          </div>
+          <p class="install-note">
+            Early builds are not code signed yet. On macOS, allow GoJS once in
+            <strong>System Settings → Privacy &amp; Security</strong>. On Windows, choose
+            <strong>More info → Run anyway</strong>.
+            <a href="https://github.com/midudev/gojs/releases/latest" target="_blank" rel="noopener noreferrer">Release notes ↗</a>
+          </p>
+        </div>
+        <ul class="platform-list" aria-label="Desktop downloads">
+          <li>
+            <img src="/platform-apple.svg" alt="" width="28" height="34"><strong>macOS</strong>
+            <span class="platform-downloads">
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-macOS-arm64.dmg">Apple Silicon</a>
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-macOS-x64.dmg">Intel</a>
             </span>
-            <a class="text-link" href="/app/">Use the web app ↗</a>
-          </div>
-        </div>
-        <div class="platform-list" aria-label="Planned operating systems">
-          <div>
-            <img src="/platform-apple.svg" alt="" width="28" height="34">
-            <strong>macOS</strong><small>Coming soon</small>
-          </div>
-          <div>
-            <img src="/platform-windows.svg" alt="" width="32" height="32">
-            <strong>Windows</strong><small>Coming soon</small>
-          </div>
-          <div>
-            <img src="/platform-linux.svg" alt="" width="32" height="37">
-            <strong>Linux</strong><small>Coming soon</small>
-          </div>
-        </div>
+          </li>
+          <li>
+            <img src="/platform-windows.svg" alt="" width="30" height="30"><strong>Windows</strong>
+            <span class="platform-downloads">
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-Windows-x64-setup.exe">Installer</a>
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-Windows-x64.msi">MSI</a>
+            </span>
+          </li>
+          <li>
+            <img src="/platform-linux.svg" alt="" width="30" height="35"><strong>Linux</strong>
+            <span class="platform-downloads">
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-Linux-x64.AppImage">AppImage</a>
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-Linux-x64.deb">.deb</a>
+              <a href="https://github.com/midudev/gojs/releases/latest/download/GoJS-Linux-x64.rpm">.rpm</a>
+            </span>
+          </li>
+        </ul>
       </section>
 
-      <section class="final-cta reveal" aria-labelledby="final-title">
-        <p>READY WHEN YOU ARE.</p>
+      <section class="final-cta" aria-labelledby="final-title">
+        <div class="sunrise-field" aria-hidden="true"><canvas></canvas></div>
         <h2 id="final-title">Your next scratch file<br>deserves better.</h2>
-        <a class="button button-primary button-large" href="/app/">Open GoJS <span aria-hidden="true">→</span></a>
+        <a class="button button-primary button-large" href="/app/">Open GoJS <svg class="pixel-arrow" viewBox="0 0 7 7" aria-hidden="true"><path d="M0 3h6v1H0zM3 1h1v1H3zM4 2h1v1H4zM4 4h1v1H4zM3 5h1v1H3z"/></svg></a>
       </section>
     </main>
 
     <footer class="site-footer">
       <a class="brand" href="/" aria-label="GoJS home">
-        <img src="/gojs.webp" alt="" width="28" height="28"><span>gojs_</span>
+        <img src="/gojs.webp" alt="" width="24" height="24"><span>gojs_</span>
       </a>
       <p>Free and open source, built by <a href="https://midu.dev" target="_blank" rel="noopener noreferrer">midudev</a>.</p>
       <div>
@@ -631,157 +665,16 @@ return doubles</textarea>
   </div>
 
   <div id="app">
+    <!-- Solo desktop (franja arrastrable con los semáforos de macOS) y el demo del
+         agente del landing (marco con logo). En la web la app no tiene barra de título. -->
     <header class="header" data-tauri-drag-region>
       <a class="header-home-link" href="/" target="_top" aria-label="Back to GoJS home">
-        <img src="/gojs.webp" alt="" class="header-logo" width="20" height="20" decoding="async">
+        <img src="/gojs.webp" alt="" class="header-logo" width="18" height="18" decoding="async">
       </a>
-      <div class="tabs-container" data-tauri-drag-region>
-        <!-- Tabs are rendered here. -->
-      </div>
-      <div class="header-actions" data-tauri-drag-region>
-        <button id="autorun-toggle-button" class="icon-button" title="Auto-run">
-          <svg id="pause-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M6 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
-            <path d="M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
-          </svg>
-          <svg id="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" hidden>
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M7 4v16l13 -8z" />
-          </svg>
-        </button>
-        <button id="ai-toggle-button" class="icon-button" title="AI enabled (click to disable)">
-          <svg id="robot-off-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-            hidden>
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M8 4h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2m-4 0h-4a2 2 0 0 1 -2 -2v-4" />
-            <path d="M12 2v2" />
-            <path d="M9 12v9" />
-            <path d="M15 15v6" />
-            <path d="M5 16l4 -2" />
-            <path d="M9 18h6" />
-            <path d="M14 8v.01" />
-            <path d="M3 3l18 18" />
-          </svg>
-          <svg id="robot-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M6 4m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" />
-            <path d="M12 2v2" />
-            <path d="M9 12v9" />
-            <path d="M15 12v9" />
-            <path d="M5 16l4 -2" />
-            <path d="M15 14l4 2" />
-            <path d="M9 18h6" />
-            <path d="M10 8v.01" />
-            <path d="M14 8v.01" />
-          </svg>
-        </button>
-        <button id="layout-toggle-button" class="icon-button" type="button" title="Switch to vertical layout"
-          aria-label="Switch to vertical layout" aria-pressed="true">
-          <svg id="layout-horizontal-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 5h16" />
-            <path d="M4 19h16" />
-            <path d="M4 9h7v6h-7z" />
-            <path d="M13 9h7v6h-7z" />
-          </svg>
-          <svg id="layout-vertical-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-            hidden>
-            <path d="M5 4v16" />
-            <path d="M19 4v16" />
-            <path d="M9 4h6v7h-6z" />
-            <path d="M9 13h6v7h-6z" />
-          </svg>
-        </button>
-        <button id="runtime-toggle-button" class="icon-button runtime-toggle" type="button" hidden
-          title="Runtime: Browser sandbox" aria-label="Switch execution runtime">
-          <span id="runtime-browser-icon" class="runtime-web-icon" aria-hidden="true">
-            <span class="runtime-language-logo runtime-language-logo-js">JS</span>
-            <span class="runtime-language-logo runtime-language-logo-ts">TS</span>
-          </span>
-          <svg id="runtime-node-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 256 292"
-            xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" hidden>
-            <defs>
-              <linearGradient id="nodejs__a" x1="68.188%" x2="27.823%" y1="17.487%" y2="89.755%">
-                <stop offset="0%" stop-color="#41873F" />
-                <stop offset="32.88%" stop-color="#418B3D" />
-                <stop offset="63.52%" stop-color="#419637" />
-                <stop offset="93.19%" stop-color="#3FA92D" />
-                <stop offset="100%" stop-color="#3FAE2A" />
-              </linearGradient>
-              <linearGradient id="nodejs__c" x1="43.277%" x2="159.245%" y1="55.169%" y2="-18.306%">
-                <stop offset="13.76%" stop-color="#41873F" />
-                <stop offset="40.32%" stop-color="#54A044" />
-                <stop offset="71.36%" stop-color="#66B848" />
-                <stop offset="90.81%" stop-color="#6CC04A" />
-              </linearGradient>
-              <linearGradient id="nodejs__f" x1="-4.389%" x2="101.499%" y1="49.997%" y2="49.997%">
-                <stop offset="9.192%" stop-color="#6CC04A" />
-                <stop offset="28.64%" stop-color="#66B848" />
-                <stop offset="59.68%" stop-color="#54A044" />
-                <stop offset="86.24%" stop-color="#41873F" />
-              </linearGradient>
-              <path id="nodejs__b"
-                d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
-              <path id="nodejs__e"
-                d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
-            </defs>
-            <path fill="url(#nodejs__a)"
-              d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
-            <mask id="nodejs__d" fill="#fff"><use xlink:href="#nodejs__b" /></mask>
-            <path fill="url(#nodejs__c)"
-              d="M249.485 67.8 134.65 1.833c-1.086-.542-2.443-1.085-3.529-1.357L2.443 220.912c1.086 1.357 2.444 2.443 3.8 3.258l114.834 65.968c3.258 1.9 7.059 2.443 10.588 1.357L252.47 70.515c-.815-1.086-1.9-1.9-2.986-2.714Z"
-              mask="url(#nodejs__d)" />
-            <mask id="nodejs__g" fill="#fff"><use xlink:href="#nodejs__e" /></mask>
-            <path fill="url(#nodejs__f)"
-              d="M249.756 223.898c3.258-1.9 5.701-5.158 6.787-8.687L130.579.204c-3.258-.543-6.787-.272-9.773 1.628L6.786 67.53l122.979 224.238c1.628-.272 3.529-.815 5.158-1.63l114.833-66.239Z"
-              mask="url(#nodejs__g)" />
-          </svg>
-          <span id="runtime-label" class="runtime-label">Web</span>
-        </button>
-        <a id="issue-button" class="icon-button" href="https://github.com/midudev/gojs-issues/issues/new"
-          target="_blank" rel="noopener noreferrer" title="New issue">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M9 9v-1a3 3 0 0 1 6 0v1" />
-            <path d="M8 9h8a6 6 0 0 1 1 3v3a5 5 0 0 1 -10 0v-3a6 6 0 0 1 1 -3" />
-            <path d="M3 13l4 0" />
-            <path d="M17 13l4 0" />
-            <path d="M12 20l0 -6" />
-            <path d="M4 19l3.35 -2" />
-            <path d="M20 19l-3.35 -2" />
-            <path d="M4 7l3.75 2.4" />
-            <path d="M20 7l-3.75 2.4" />
-          </svg>
-        </a>
-        <button id="history-button" class="icon-button" title="Version history" aria-label="Version history"
-          aria-controls="history-modal" aria-expanded="false">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M12 8l0 4l2 2" />
-            <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
-          </svg>
-        </button>
-        <button id="settings-button" class="icon-button" title="Settings" aria-label="Settings"
-          aria-controls="settings-modal" aria-expanded="false">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path
-              d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
-            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
-          </svg>
-        </button>
-      </div>
+      <span class="window-title" data-tauri-drag-region>GoJS</span>
     </header>
 
+    <div class="workbench">
     <main class="main-content">
       <resize-panels style="height: 100%;" responsive-config='{
         "default": "vertical",
@@ -793,6 +686,90 @@ return doubles</textarea>
         ]
       }'>
         <div class="editor-panel">
+          <div class="editor-titlebar">
+            <div class="tabs-container">
+              <!-- Tabs are rendered here. -->
+            </div>
+            <div class="editor-actions" aria-label="Editor actions" role="toolbar">
+              <button id="autorun-toggle-button" class="icon-button editor-action" type="button" aria-label="Pause auto-run" aria-pressed="true">
+                <svg id="pause-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M6 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
+                  <path d="M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
+                </svg>
+                <svg id="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" hidden>
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M7 4v16l13 -8z" />
+                </svg>
+              </button>
+              <button id="runtime-toggle-button" class="icon-button editor-action runtime-toggle" type="button" hidden
+                title="Runtime: Browser sandbox" aria-label="Switch execution runtime">
+                <span id="runtime-browser-icon" class="runtime-web-icon" aria-hidden="true">
+                  <span class="runtime-language-logo runtime-language-logo-js">JS</span>
+                  <span class="runtime-language-logo runtime-language-logo-ts">TS</span>
+                </span>
+                <svg id="runtime-node-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 256 292"
+                  xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" hidden>
+                  <defs>
+                    <linearGradient id="nodejs__a" x1="68.188%" x2="27.823%" y1="17.487%" y2="89.755%">
+                      <stop offset="0%" stop-color="#41873F" />
+                      <stop offset="32.88%" stop-color="#418B3D" />
+                      <stop offset="63.52%" stop-color="#419637" />
+                      <stop offset="93.19%" stop-color="#3FA92D" />
+                      <stop offset="100%" stop-color="#3FAE2A" />
+                    </linearGradient>
+                    <linearGradient id="nodejs__c" x1="43.277%" x2="159.245%" y1="55.169%" y2="-18.306%">
+                      <stop offset="13.76%" stop-color="#41873F" />
+                      <stop offset="40.32%" stop-color="#54A044" />
+                      <stop offset="71.36%" stop-color="#66B848" />
+                      <stop offset="90.81%" stop-color="#6CC04A" />
+                    </linearGradient>
+                    <linearGradient id="nodejs__f" x1="-4.389%" x2="101.499%" y1="49.997%" y2="49.997%">
+                      <stop offset="9.192%" stop-color="#6CC04A" />
+                      <stop offset="28.64%" stop-color="#66B848" />
+                      <stop offset="59.68%" stop-color="#54A044" />
+                      <stop offset="86.24%" stop-color="#41873F" />
+                    </linearGradient>
+                    <path id="nodejs__b"
+                      d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
+                    <path id="nodejs__e"
+                      d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
+                  </defs>
+                  <path fill="url(#nodejs__a)"
+                    d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
+                  <mask id="nodejs__d" fill="#fff"><use xlink:href="#nodejs__b" /></mask>
+                  <path fill="url(#nodejs__c)"
+                    d="M249.485 67.8 134.65 1.833c-1.086-.542-2.443-1.085-3.529-1.357L2.443 220.912c1.086 1.357 2.444 2.443 3.8 3.258l114.834 65.968c3.258 1.9 7.059 2.443 10.588 1.357L252.47 70.515c-.815-1.086-1.9-1.9-2.986-2.714Z"
+                    mask="url(#nodejs__d)" />
+                  <mask id="nodejs__g" fill="#fff"><use xlink:href="#nodejs__e" /></mask>
+                  <path fill="url(#nodejs__f)"
+                    d="M249.756 223.898c3.258-1.9 5.701-5.158 6.787-8.687L130.579.204c-3.258-.543-6.787-.272-9.773 1.628L6.786 67.53l122.979 224.238c1.628-.272 3.529-.815 5.158-1.63l114.833-66.239Z"
+                    mask="url(#nodejs__g)" />
+                </svg>
+                <span id="runtime-label" class="runtime-label">Web</span>
+              </button>
+              <button id="layout-toggle-button" class="icon-button editor-action" type="button"
+                aria-label="Switch to vertical layout" aria-pressed="true">
+                <svg id="layout-horizontal-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 5h16" />
+                  <path d="M4 19h16" />
+                  <path d="M4 9h7v6h-7z" />
+                  <path d="M13 9h7v6h-7z" />
+                </svg>
+                <svg id="layout-vertical-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                  hidden>
+                  <path d="M5 4v16" />
+                  <path d="M19 4v16" />
+                  <path d="M9 4h6v7h-6z" />
+                  <path d="M9 13h6v7h-6z" />
+                </svg>
+              </button>
+            </div>
+          </div>
           <div id="editor"></div>
           <div id="ai-autocomplete-status" class="ai-autocomplete-status" data-state="idle" role="status"
             aria-live="polite" aria-atomic="true" hidden>
@@ -802,12 +779,16 @@ return doubles</textarea>
         </div>
 
         <div class="output-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Output</h2>
+          </div>
           <div id="output" class="output-content"></div>
         </div>
 
 
         <div class="chatbot-panel is-empty" id="chatbot-panel">
-          <div class="chatbot-header">
+          <div class="chatbot-header panel-header">
+            <h2 class="panel-title">Chat</h2>
             <button id="chatbot-clear" class="chatbot-action-btn" title="Clear conversation" hidden>
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -821,6 +802,12 @@ return doubles</textarea>
             </button>
           </div>
           <div class="chatbot-messages" id="chatbot-messages"></div>
+          <div class="chatbot-suggestions" aria-label="Suggestions">
+            <p class="chatbot-suggestions-hint">Ask about your code or describe a change. The assistant runs locally.</p>
+            <button type="button" class="chatbot-suggestion" data-prompt="Explain this code">Explain this code</button>
+            <button type="button" class="chatbot-suggestion" data-prompt="What does it print?">What does it print?</button>
+            <button type="button" class="chatbot-suggestion" data-prompt="Fix the errors">Fix the errors</button>
+          </div>
           <section id="chatbot-queue" class="chatbot-queue" aria-labelledby="chatbot-queue-label" hidden>
             <button id="chatbot-queue-toggle" class="chatbot-queue-toggle" type="button" aria-expanded="true"
               aria-controls="chatbot-queue-list">
@@ -868,11 +855,107 @@ return doubles</textarea>
       </resize-panels>
     </main>
 
+    <nav class="activity-bar" aria-label="Panels">
+      <!-- Solo móvil: elige la vista a pantalla completa. -->
+      <button class="icon-button activity-item mobile-view-item" type="button" data-view="editor" aria-label="Code"
+        aria-pressed="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7 8l-4 4l4 4" />
+          <path d="M17 8l4 4l-4 4" />
+          <path d="M14 4l-4 16" />
+        </svg>
+      </button>
+      <button class="icon-button activity-item mobile-view-item" type="button" data-view="output" aria-label="Output"
+        aria-pressed="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 9l3 3l-3 3" />
+          <path d="M13 15l3 0" />
+          <path d="M3 8a4 4 0 0 1 4 -4h10a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-10a4 4 0 0 1 -4 -4z" />
+        </svg>
+      </button>
+      <button class="icon-button activity-item mobile-view-item" type="button" data-view="chat" aria-label="Chat"
+        aria-pressed="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 9h8" />
+          <path d="M8 13h6" />
+          <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z" />
+        </svg>
+      </button>
+      <button id="ai-toggle-button" class="icon-button activity-item" type="button" aria-label="Turn off the AI assistant" aria-pressed="true">
+        <svg id="robot-off-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true" hidden>
+          <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6z" />
+          <path d="M3 3l18 18" />
+        </svg>
+        <svg id="robot-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6z" />
+        </svg>
+      </button>
+      <button id="history-button" class="icon-button activity-item" type="button" aria-label="Version history"
+        aria-controls="history-modal" aria-expanded="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M12 8l0 4l2 2" />
+          <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+        </svg>
+      </button>
+      <div class="activity-bar-spacer"></div>
+      <a id="issue-button" class="icon-button activity-item" href="https://github.com/midudev/gojs-issues/issues/new"
+        target="_blank" rel="noopener noreferrer" aria-label="Report an issue">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M9 9v-1a3 3 0 0 1 6 0v1" />
+          <path d="M8 9h8a6 6 0 0 1 1 3v3a5 5 0 0 1 -10 0v-3a6 6 0 0 1 1 -3" />
+          <path d="M3 13l4 0" />
+          <path d="M17 13l4 0" />
+          <path d="M12 20l0 -6" />
+          <path d="M4 19l3.35 -2" />
+          <path d="M20 19l-3.35 -2" />
+          <path d="M4 7l3.75 2.4" />
+          <path d="M20 7l-3.75 2.4" />
+        </svg>
+      </a>
+      <button id="settings-button" class="icon-button activity-item" type="button" aria-label="Settings"
+        aria-controls="settings-modal" aria-expanded="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path
+            d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+          <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+        </svg>
+      </button>
+    </nav>
+    </div>
+
+    <footer class="status-bar" aria-label="Status bar">
+      <div class="status-bar-group">
+        <a class="status-item status-brand" href="/" target="_top" aria-label="Back to GoJS home">
+          <img src="/gojs.webp" alt="" width="14" height="14" decoding="async">
+          <span>GoJS</span>
+        </a>
+        <span id="status-runtime" class="status-item">Browser</span>
+        <span id="status-run" class="status-item" role="status" aria-live="polite"></span>
+      </div>
+      <div class="status-bar-group">
+        <span id="status-cursor" class="status-item">Ln 1, Col 1</span>
+        <span class="status-item">TypeScript</span>
+      </div>
+    </footer>
+
     <!-- Tooltips (Popover API - hint) for header actions -->
-    <div id="tooltip-autorun" class="tooltip" popover="hint">Auto execute</div>
-    <div id="tooltip-ai" class="tooltip" popover="hint">Toggle AI</div>
-    <div id="tooltip-layout" class="tooltip" popover="hint">Switch layout</div>
-    <div id="tooltip-issue" class="tooltip" popover="hint">New issue</div>
+    <div id="tooltip-autorun" class="tooltip" popover="hint">Pause auto-run</div>
+    <div id="tooltip-ai" class="tooltip" popover="hint">Turn off the AI assistant</div>
+    <div id="tooltip-layout" class="tooltip" popover="hint">Switch to vertical layout</div>
+    <div id="tooltip-history" class="tooltip" popover="hint">Version history</div>
+    <div id="tooltip-issue" class="tooltip" popover="hint">Report an issue</div>
     <div id="tooltip-settings" class="tooltip" popover="hint">Settings</div>
 
     <!-- Editor side panels -->
@@ -986,14 +1069,14 @@ return doubles</textarea>
                 </select>
               </div>
               <div class="setting-item">
-                <label for="setting-font-family">Font Family</label>
+                <label for="setting-font-family">Font family</label>
                 <select id="setting-font-family">
                   <option value="JetBrains Mono">JetBrains Mono</option>
                   <option value="Cascadia Code">Cascadia Code</option>
                 </select>
               </div>
               <div class="setting-item">
-                <label for="setting-font-size">Font Size</label>
+                <label for="setting-font-size">Font size</label>
                 <input type="number" id="setting-font-size" min="10" max="30" value="14" />
               </div>
               <div class="setting-item-checkbox">
@@ -1044,11 +1127,11 @@ return doubles</textarea>
                 <label for="setting-auto-format">Automatically format code on run</label>
               </div>
               <div class="setting-item">
-                <label for="setting-print-width">Print Width</label>
+                <label for="setting-print-width">Print width</label>
                 <input type="number" id="setting-print-width" min="40" max="200" value="80" />
               </div>
               <div class="setting-item">
-                <label for="setting-tab-width">Tab Width</label>
+                <label for="setting-tab-width">Tab width</label>
                 <input type="number" id="setting-tab-width" min="1" max="8" value="2" />
               </div>
               <div class="setting-item-checkbox">
@@ -1060,7 +1143,7 @@ return doubles</textarea>
                 <label for="setting-single-quote">Use single quotes instead of double quotes</label>
               </div>
               <div class="setting-item">
-                <label for="setting-quote-props">Quote Props</label>
+                <label for="setting-quote-props">Quote props</label>
                 <select id="setting-quote-props">
                   <option value="as-needed">as-needed</option>
                   <option value="consistent">consistent</option>
@@ -1072,7 +1155,7 @@ return doubles</textarea>
                 <label for="setting-jsx-single-quote">Use single quotes instead of double quotes in JSX</label>
               </div>
               <div class="setting-item">
-                <label for="setting-trailing-comma">Trailing Commas</label>
+                <label for="setting-trailing-comma">Trailing commas</label>
                 <select id="setting-trailing-comma">
                   <option value="none">none</option>
                   <option value="es5">es5</option>
@@ -1084,7 +1167,7 @@ return doubles</textarea>
                 <label for="setting-bracket-spacing">Print spaces between brackets in object literals</label>
               </div>
               <div class="setting-item">
-                <label for="setting-arrow-parens">Arrow Function Parentheses</label>
+                <label for="setting-arrow-parens">Arrow function parentheses</label>
                 <select id="setting-arrow-parens">
                   <option value="always">always</option>
                   <option value="avoid">avoid</option>
