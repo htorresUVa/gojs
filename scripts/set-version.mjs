@@ -33,7 +33,8 @@ function readVersions() {
   const cargoToml = readFileSync(files.cargo, 'utf8')
   const cargoLock = readFileSync(files.cargoLock, 'utf8')
   const cargoPackage = cargoToml.match(/^\[package\][\s\S]*?^version\s*=\s*"([^"]+)"/m)
-  const cargoLockPackage = cargoLock.match(/(?:^|\n)\[\[package\]\]\nname = "gojs"\nversion = "([^"]+)"/)
+  // Windows checkouts may use CRLF line endings.
+  const cargoLockPackage = cargoLock.match(/(?:^|\r?\n)\[\[package\]\]\r?\nname = "gojs"\r?\nversion = "([^"]+)"/)
 
   if (!cargoPackage) throw new Error('Could not find [package].version in src-tauri/Cargo.toml')
   if (!cargoLockPackage) throw new Error('Could not find the gojs package version in src-tauri/Cargo.lock')
@@ -61,7 +62,10 @@ function updateCargoVersion(contents, nextVersion) {
 }
 
 function updateCargoLockVersion(contents, nextVersion) {
-  const updated = contents.replace(/((?:^|\n)\[\[package\]\]\nname = "gojs"\nversion = )"[^"]+"/, `$1"${nextVersion}"`)
+  const updated = contents.replace(
+    /((?:^|\r?\n)\[\[package\]\]\r?\nname = "gojs"\r?\nversion = )"[^"]+"/,
+    `$1"${nextVersion}"`,
+  )
   if (updated === contents && readVersions().cargoLock !== nextVersion) {
     throw new Error('Could not update the gojs package version in src-tauri/Cargo.lock')
   }
