@@ -62,26 +62,34 @@ jobs:
     needs: prepare
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: macOS Apple Silicon
+            asset_name: GoJS-macOS-arm64
             runner: macos-15
             rust_target: aarch64-apple-darwin
             node_platform: darwin
             node_arch: arm64
           - label: macOS Intel
+            asset_name: GoJS-macOS-x64
             runner: macos-15-intel
             rust_target: x86_64-apple-darwin
             node_platform: darwin
             node_arch: x64
           - label: Windows x64
+            asset_name: GoJS-Windows-x64
             runner: windows-2022
             rust_target: x86_64-pc-windows-msvc
             node_platform: win32
             node_arch: x64
           - label: Linux x64
+            asset_name: GoJS-Linux-x64
             runner: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
             node_platform: linux
@@ -150,7 +158,10 @@ jobs:
           APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           if [[ -z "${APPLE_CERTIFICATE_BASE64}" || -z "${APPLE_CERTIFICATE_PASSWORD}" || -z "${APPLE_SIGNING_IDENTITY_SECRET}" ]]; then
-            echo "Apple signing secrets are incomplete; producing unsigned artifacts."
+            # Apple Silicon refuses downloaded apps with no signature at all, so
+            # sign ad-hoc: users can still allow it in Privacy & Security.
+            echo "Apple signing secrets are incomplete; producing ad-hoc signed artifacts."
+            echo "APPLE_SIGNING_IDENTITY=-" >> "${GITHUB_ENV}"
             exit 0
           fi
 
@@ -191,36 +202,139 @@ jobs:
         if: matrix.node_platform == 'win32'
         shell: pwsh
         env:
-          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          AZURE_CLIENT_ID_SECRET: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID_SECRET: ${{ secrets.AZURE_TENANT_ID }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ secrets.ARTIFACT_SIGNING_PROFILE }}
+          ARTIFACT_SIGNING_CLIENT_VERSION: 1.0.128
+          ARTIFACT_SIGNING_CLIENT_SHA256: 74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b
         run: |
-          if (-not $env:WINDOWS_CERTIFICATE_BASE64 -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
-            Write-Host "Windows signing secrets are incomplete; keeping unsigned artifacts."
+          $required = @(
+            $env:AZURE_CLIENT_ID_SECRET,
+            $env:AZURE_CLIENT_SECRET_SECRET,
+            $env:AZURE_TENANT_ID_SECRET,
+            $env:ARTIFACT_SIGNING_ENDPOINT,
+            $env:ARTIFACT_SIGNING_ACCOUNT,
+            $env:ARTIFACT_SIGNING_PROFILE
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($_) })
+          if ($missing.Count -gt 0) {
+            Write-Host "Artifact Signing secrets are incomplete; keeping unsigned artifacts."
             exit 0
           }
 
-          $pfxPath = Join-Path $env:RUNNER_TEMP "gojs-signing.pfx"
-          [IO.File]::WriteAllBytes(
-            $pfxPath,
-            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
-          )
-          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          $certificate = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
-          "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "GOJS_WINDOWS_CERTIFICATE_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # The signtool dlib from Microsoft.ArtifactSigning.Client, pinned and verified.
+          $version = $env:ARTIFACT_SIGNING_CLIENT_VERSION
+          $package = Join-Path $env:RUNNER_TEMP "artifact-signing-client.zip"
+          $clientDir = Join-Path $env:RUNNER_TEMP "artifact-signing-client"
+          Invoke-WebRequest `
+            -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/$version/microsoft.artifactsigning.client.$version.nupkg" `
+            -OutFile $package
+          $hash = (Get-FileHash $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:ARTIFACT_SIGNING_CLIENT_SHA256) {
+            throw "Checksum mismatch for Microsoft.ArtifactSigning.Client $version ($hash)."
+          }
+          Expand-Archive -Force -Path $package -DestinationPath $clientDir
+
+          # Authenticate only with the service principal from the environment.
+          $metadataPath = Join-Path $env:RUNNER_TEMP "artifact-signing.json"
+          @{
+            Endpoint = $env:ARTIFACT_SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:ARTIFACT_SIGNING_ACCOUNT
+            CertificateProfileName = $env:ARTIFACT_SIGNING_PROFILE
+            ExcludeCredentials = @(
+              "ManagedIdentityCredential",
+              "WorkloadIdentityCredential",
+              "SharedTokenCacheCredential",
+              "VisualStudioCredential",
+              "VisualStudioCodeCredential",
+              "AzureCliCredential",
+              "AzurePowerShellCredential",
+              "AzureDeveloperCliCredential",
+              "InteractiveBrowserCredential"
+            )
+          } | ConvertTo-Json | Out-File -FilePath $metadataPath -Encoding utf8
+
+          "AZURE_CLIENT_ID=$env:AZURE_CLIENT_ID_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AZURE_CLIENT_SECRET=$env:AZURE_CLIENT_SECRET_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "AZURE_TENANT_ID=$env:AZURE_TENANT_ID_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GOJS_ARTIFACT_SIGNING_DLIB=$(Join-Path $clientDir 'bin\x64\Azure.CodeSigning.Dlib.dll')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GOJS_ARTIFACT_SIGNING_METADATA=$metadataPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build desktop bundles
         run: pnpm tauri build --ci --target ${{ matrix.rust_target }} -- --locked
 
-      - name: Remove temporary Windows certificate
-        if: always() && matrix.node_platform == 'win32'
-        shell: pwsh
+      - name: Notarize macOS disk image
+        if: matrix.node_platform == 'darwin' && env.APPLE_ID != ''
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
-          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
-            Remove-Item "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_THUMBPRINT" -Force -ErrorAction SilentlyContinue
+          set -euo pipefail
+          # Tauri notarizes and staples the .app; the .dmg around it needs its own ticket.
+          while IFS= read -r -d '' dmg; do
+            result="$(xcrun notarytool submit "${dmg}" \
+              --apple-id "${APPLE_ID}" \
+              --password "${APPLE_PASSWORD}" \
+              --team-id "${APPLE_TEAM_ID}" \
+              --wait \
+              --output-format json)"
+            status="$(plutil -extract status raw -o - - <<< "${result}")"
+            if [[ "${status}" != "Accepted" ]]; then
+              submission="$(plutil -extract id raw -o - - <<< "${result}")"
+              xcrun notarytool log "${submission}" \
+                --apple-id "${APPLE_ID}" \
+                --password "${APPLE_PASSWORD}" \
+                --team-id "${APPLE_TEAM_ID}" || true
+              echo "::error::Notarization of $(basename "${dmg}") finished with status ${status}"
+              exit 1
+            fi
+            xcrun stapler staple "${dmg}"
+          done < <(find "src-tauri/target/${RUST_TARGET}/release/bundle/dmg" -name '*.dmg' -print0)
+
+      - name: Verify macOS signatures
+        if: matrix.node_platform == 'darwin' && env.GOJS_APPLE_SIGNING_READY == 'true'
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/${RUST_TARGET}/release/bundle"
+          app="$(find "${bundle_dir}/macos" -maxdepth 1 -name '*.app' -print -quit)"
+          node_binary="${app}/Contents/Resources/runtime/bin/node"
+
+          codesign --verify --deep --strict --verbose=2 "${app}"
+          codesign --verify --strict --verbose=2 "${node_binary}"
+          if codesign --display --entitlements - --xml "${node_binary}" 2>/dev/null | grep -q get-task-allow; then
+            echo "::error::The bundled Node.js binary still requests get-task-allow"
+            exit 1
+          fi
+
+          if [[ -n "${APPLE_ID:-}" ]]; then
+            spctl --assess --type execute --verbose=2 "${app}"
+            xcrun stapler validate "${app}"
+            while IFS= read -r -d '' dmg; do
+              spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg}"
+              xcrun stapler validate "${dmg}"
+            done < <(find "${bundle_dir}/dmg" -name '*.dmg' -print0)
+          fi
+
+      - name: Verify Windows signatures
+        if: matrix.node_platform == 'win32' && env.GOJS_ARTIFACT_SIGNING_DLIB != ''
+        shell: pwsh
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          $installers = Get-ChildItem "src-tauri/target/$env:RUST_TARGET/release/bundle" -Recurse -Include *.exe, *.msi
+          if (-not $installers) {
+            throw "No Windows installers were produced."
           }
-          if ($env:GOJS_WINDOWS_CERTIFICATE_PATH) {
-            Remove-Item $env:GOJS_WINDOWS_CERTIFICATE_PATH -Force -ErrorAction SilentlyContinue
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature $installer.FullName
+            if ($signature.Status -ne "Valid" -or -not $signature.TimeStamperCertificate) {
+              throw "$($installer.Name) is not signed and timestamped (status: $($signature.Status))."
+            }
+            Write-Host "✓ $($installer.Name): $($signature.SignerCertificate.Subject)"
           }
 
       - name: Remove temporary Apple keychain
@@ -234,14 +348,24 @@ jobs:
         if: success()
         shell: bash
         env:
-          ARTIFACT_PREFIX: ${{ matrix.rust_target }}
+          ASSET_NAME: ${{ matrix.asset_name }}
+          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
           set -euo pipefail
-          bundle_dir="src-tauri/target/${ARTIFACT_PREFIX}/release/bundle"
+          bundle_dir="src-tauri/target/${RUST_TARGET}/release/bundle"
           mkdir -p release-assets
 
+          # Version-less names keep releases/latest/download/<name> links stable.
           while IFS= read -r -d '' file; do
-            cp "${file}" "release-assets/gojs-${ARTIFACT_PREFIX}-$(basename "${file}")"
+            case "${file}" in
+              *.exe) target="${ASSET_NAME}-setup.exe" ;;
+              *) target="${ASSET_NAME}.${file##*.}" ;;
+            esac
+            if [[ -e "release-assets/${target}" ]]; then
+              echo "::error::More than one bundle would be published as ${target}"
+              exit 1
+            fi
+            cp "${file}" "release-assets/${target}"
           done < <(
             find "${bundle_dir}" -type f \
               \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
@@ -257,8 +381,13 @@ jobs:
             const lines = files.map((name) =>
               `${createHash("sha256").update(readFileSync(`${dir}/${name}`)).digest("hex")}  ${name}`
             );
-            writeFileSync(`${dir}/SHA256SUMS-${process.env.ARTIFACT_PREFIX}.txt`, `${lines.join("\n")}\n`);
+            writeFileSync(`${dir}/SHA256SUMS-${process.env.ASSET_NAME}.txt`, `${lines.join("\n")}\n`);
           '
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-assets/*
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7

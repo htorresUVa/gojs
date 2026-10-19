@@ -16,7 +16,8 @@
     "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/set-version.mjs --check",
     "desktop:dev": "tauri dev",
-    "desktop:build": "pnpm node:fetch && tauri build"
+    "desktop:build": "pnpm node:fetch && tauri build",
+    "desktop:sign-runtime": "node scripts/sign-macos-runtime.mjs"
   },
   "keywords": [
     "javascript",
