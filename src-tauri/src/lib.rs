@@ -143,7 +143,7 @@ pub fn run() {
             }
             "report-issue" => {
                 let _ = app.opener().open_url(
-                    "https://github.com/midudev/gojs-issues/issues/new",
+                    "https://github.com/midudev/gojs/issues/new",
                     None::<&str>,
                 );
             }
