@@ -11,8 +11,8 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
+# Every job opts into the exact permissions it needs.
+permissions: {}
 
 concurrency:
   group: desktop-release-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
@@ -20,7 +20,11 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-22.04
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # check out the tagged source
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
@@ -45,10 +49,10 @@ jobs:
           echo "version=${tag#v}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.release.outputs.tag }}
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify tag and source versions
         env:
@@ -62,32 +66,43 @@ jobs:
     needs: prepare
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    # Signing secrets live only in this environment, which accepts runs from
+    # vX.Y.Z tags (and main, for manual re-runs of an existing tag).
+    environment: release
     permissions:
-      contents: read
-      id-token: write
-      attestations: write
+      contents: read # check out the tagged source
+      id-token: write # sign build provenance attestations and log in to Azure with OIDC
+      attestations: write # store the build provenance attestations
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: macOS Apple Silicon
             asset_name: GoJS-macOS-arm64
-            runner: macos-15
+            runner: macos-26
             rust_target: aarch64-apple-darwin
             node_platform: darwin
             node_arch: arm64
+          # Cross-compiled on Apple Silicon: the Intel runners take twice as
+          # long and are being retired.
           - label: macOS Intel
             asset_name: GoJS-macOS-x64
-            runner: macos-15-intel
+            runner: macos-26
             rust_target: x86_64-apple-darwin
             node_platform: darwin
             node_arch: x64
           - label: Windows x64
             asset_name: GoJS-Windows-x64
-            runner: windows-2022
+            runner: windows-2025
             rust_target: x86_64-pc-windows-msvc
             node_platform: win32
             node_arch: x64
+          # The oldest supported Ubuntu keeps the AppImage and .deb compatible
+          # with older glibc versions.
           - label: Linux x64
             asset_name: GoJS-Linux-x64
             runner: ubuntu-22.04
@@ -97,29 +112,28 @@ jobs:
 
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
 
+      # No caches anywhere in this workflow: a poisoned cache entry would end
+      # up inside signed release binaries.
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.5.1
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Cache Rust build
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-          key: ${{ matrix.rust_target }}
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          rustup toolchain install stable --profile minimal --target "${RUST_TARGET}" --no-self-update
+          rustup default stable
 
       - name: Install Linux system dependencies
         if: matrix.node_platform == 'linux'
@@ -142,7 +156,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Verify source version
-        run: pnpm version:check ${{ needs.prepare.outputs.version }}
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: pnpm version:check "${RELEASE_VERSION}"
 
       - name: Fetch target Node.js runtime
         env:
@@ -150,17 +166,24 @@ jobs:
           NODE_PLATFORM: ${{ matrix.node_platform }}
         run: pnpm node:fetch
 
+      # Compile before any signing credential exists in the job, so build
+      # scripts of npm packages and crates never see them.
+      - name: Compile desktop app
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: pnpm tauri build --ci --no-bundle --target "${RUST_TARGET}" -- --locked
+
       - name: Configure optional Apple signing
         if: matrix.node_platform == 'darwin'
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_SIGNING_IDENTITY_VAR: ${{ vars.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [[ -z "${APPLE_CERTIFICATE_BASE64}" || -z "${APPLE_CERTIFICATE_PASSWORD}" || -z "${APPLE_SIGNING_IDENTITY_SECRET}" ]]; then
+          if [[ -z "${APPLE_CERTIFICATE_BASE64}" || -z "${APPLE_CERTIFICATE_PASSWORD}" || -z "${APPLE_SIGNING_IDENTITY_VAR}" ]]; then
             # Apple Silicon refuses downloaded apps with no signature at all, so
             # sign ad-hoc: users can still allow it in Privacy & Security.
-            echo "Apple signing secrets are incomplete; producing ad-hoc signed artifacts."
+            echo "Apple signing is not configured; producing ad-hoc signed artifacts."
             echo "APPLE_SIGNING_IDENTITY=-" >> "${GITHUB_ENV}"
             exit 0
           fi
@@ -173,56 +196,65 @@ jobs:
           security create-keychain -p "${keychain_password}" "${keychain_path}"
           security set-keychain-settings -lut 21600 "${keychain_path}"
           security unlock-keychain -p "${keychain_password}" "${keychain_path}"
-          security import "${certificate_path}" -k "${keychain_path}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+          # -x: the private key can be used by codesign but never exported again.
+          security import "${certificate_path}" -k "${keychain_path}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign -x
           security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
           security list-keychains -d user -s "${keychain_path}"
-
-          echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY_SECRET}" >> "${GITHUB_ENV}"
-          echo "GOJS_SIGNING_KEYCHAIN=${keychain_path}" >> "${GITHUB_ENV}"
-          echo "GOJS_APPLE_SIGNING_READY=true" >> "${GITHUB_ENV}"
           rm -f "${certificate_path}"
 
+          echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY_VAR}" >> "${GITHUB_ENV}"
+          echo "GOJS_SIGNING_KEYCHAIN=${keychain_path}" >> "${GITHUB_ENV}"
+          echo "GOJS_APPLE_SIGNING_READY=true" >> "${GITHUB_ENV}"
+
+      # An App Store Connect API key, not an Apple ID: an app-specific password
+      # would also unlock the account's iCloud data if it ever leaked.
       - name: Configure optional Apple notarization
         if: matrix.node_platform == 'darwin'
         env:
-          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY_ID: ${{ vars.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ vars.APPLE_API_ISSUER }}
         run: |
-          if [[ "${GOJS_APPLE_SIGNING_READY:-}" != "true" || -z "${APPLE_ID_SECRET}" || -z "${APPLE_PASSWORD_SECRET}" || -z "${APPLE_TEAM_ID_SECRET}" ]]; then
-            echo "Apple notarization secrets are incomplete; skipping notarization."
+          if [[ "${GOJS_APPLE_SIGNING_READY:-}" != "true" || -z "${APPLE_API_PRIVATE_KEY}" || -z "${APPLE_API_KEY_ID}" || -z "${APPLE_API_ISSUER_ID}" ]]; then
+            echo "Apple notarization is not configured; skipping notarization."
             exit 0
           fi
 
-          echo "APPLE_ID=${APPLE_ID_SECRET}" >> "${GITHUB_ENV}"
-          echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}" >> "${GITHUB_ENV}"
-          echo "APPLE_TEAM_ID=${APPLE_TEAM_ID_SECRET}" >> "${GITHUB_ENV}"
+          key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
+          (umask 077 && printf '%s\n' "${APPLE_API_PRIVATE_KEY}" > "${key_path}")
+
+          echo "APPLE_API_KEY=${APPLE_API_KEY_ID}" >> "${GITHUB_ENV}"
+          echo "APPLE_API_ISSUER=${APPLE_API_ISSUER_ID}" >> "${GITHUB_ENV}"
+          echo "APPLE_API_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
+
+      # Federated OIDC login: there is no Azure secret to leak, and the token
+      # only works for runs in the release environment.
+      - name: Log in to Azure for Windows signing
+        if: matrix.node_platform == 'win32' && vars.AZURE_CLIENT_ID != ''
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
 
       - name: Configure optional Windows signing
-        if: matrix.node_platform == 'win32'
+        if: matrix.node_platform == 'win32' && vars.AZURE_CLIENT_ID != ''
         shell: pwsh
         env:
-          AZURE_CLIENT_ID_SECRET: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID_SECRET: ${{ secrets.AZURE_TENANT_ID }}
-          ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
-          ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT }}
-          ARTIFACT_SIGNING_PROFILE: ${{ secrets.ARTIFACT_SIGNING_PROFILE }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
           ARTIFACT_SIGNING_CLIENT_VERSION: 1.0.128
           ARTIFACT_SIGNING_CLIENT_SHA256: 74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b
         run: |
           $required = @(
-            $env:AZURE_CLIENT_ID_SECRET,
-            $env:AZURE_CLIENT_SECRET_SECRET,
-            $env:AZURE_TENANT_ID_SECRET,
             $env:ARTIFACT_SIGNING_ENDPOINT,
             $env:ARTIFACT_SIGNING_ACCOUNT,
             $env:ARTIFACT_SIGNING_PROFILE
           )
           $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($_) })
           if ($missing.Count -gt 0) {
-            Write-Host "Artifact Signing secrets are incomplete; keeping unsigned artifacts."
-            exit 0
+            throw "AZURE_CLIENT_ID is set, but the Artifact Signing endpoint, account or profile is missing."
           }
 
           # The signtool dlib from Microsoft.ArtifactSigning.Client, pinned and verified.
@@ -238,36 +270,35 @@ jobs:
           }
           Expand-Archive -Force -Path $package -DestinationPath $clientDir
 
-          # Authenticate only with the service principal from the environment.
+          # Authenticate only through the Azure CLI session from the OIDC login.
           $metadataPath = Join-Path $env:RUNNER_TEMP "artifact-signing.json"
           @{
             Endpoint = $env:ARTIFACT_SIGNING_ENDPOINT
             CodeSigningAccountName = $env:ARTIFACT_SIGNING_ACCOUNT
             CertificateProfileName = $env:ARTIFACT_SIGNING_PROFILE
             ExcludeCredentials = @(
+              "EnvironmentCredential",
               "ManagedIdentityCredential",
               "WorkloadIdentityCredential",
               "SharedTokenCacheCredential",
               "VisualStudioCredential",
               "VisualStudioCodeCredential",
-              "AzureCliCredential",
               "AzurePowerShellCredential",
               "AzureDeveloperCliCredential",
               "InteractiveBrowserCredential"
             )
           } | ConvertTo-Json | Out-File -FilePath $metadataPath -Encoding utf8
 
-          "AZURE_CLIENT_ID=$env:AZURE_CLIENT_ID_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "AZURE_CLIENT_SECRET=$env:AZURE_CLIENT_SECRET_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "AZURE_TENANT_ID=$env:AZURE_TENANT_ID_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "GOJS_ARTIFACT_SIGNING_DLIB=$(Join-Path $clientDir 'bin\x64\Azure.CodeSigning.Dlib.dll')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "GOJS_ARTIFACT_SIGNING_METADATA=$metadataPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Build desktop bundles
-        run: pnpm tauri build --ci --target ${{ matrix.rust_target }} -- --locked
+      - name: Bundle, sign and notarize
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: pnpm tauri bundle --ci --target "${RUST_TARGET}"
 
       - name: Notarize macOS disk image
-        if: matrix.node_platform == 'darwin' && env.APPLE_ID != ''
+        if: matrix.node_platform == 'darwin' && env.APPLE_API_KEY_PATH != ''
         env:
           RUST_TARGET: ${{ matrix.rust_target }}
         run: |
@@ -275,18 +306,18 @@ jobs:
           # Tauri notarizes and staples the .app; the .dmg around it needs its own ticket.
           while IFS= read -r -d '' dmg; do
             result="$(xcrun notarytool submit "${dmg}" \
-              --apple-id "${APPLE_ID}" \
-              --password "${APPLE_PASSWORD}" \
-              --team-id "${APPLE_TEAM_ID}" \
+              --key "${APPLE_API_KEY_PATH}" \
+              --key-id "${APPLE_API_KEY}" \
+              --issuer "${APPLE_API_ISSUER}" \
               --wait \
               --output-format json)"
             status="$(plutil -extract status raw -o - - <<< "${result}")"
             if [[ "${status}" != "Accepted" ]]; then
               submission="$(plutil -extract id raw -o - - <<< "${result}")"
               xcrun notarytool log "${submission}" \
-                --apple-id "${APPLE_ID}" \
-                --password "${APPLE_PASSWORD}" \
-                --team-id "${APPLE_TEAM_ID}" || true
+                --key "${APPLE_API_KEY_PATH}" \
+                --key-id "${APPLE_API_KEY}" \
+                --issuer "${APPLE_API_ISSUER}" || true
               echo "::error::Notarization of $(basename "${dmg}") finished with status ${status}"
               exit 1
             fi
@@ -310,7 +341,7 @@ jobs:
             exit 1
           fi
 
-          if [[ -n "${APPLE_ID:-}" ]]; then
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
             spctl --assess --type execute --verbose=2 "${app}"
             xcrun stapler validate "${app}"
             while IFS= read -r -d '' dmg; do
@@ -337,16 +368,18 @@ jobs:
             Write-Host "✓ $($installer.Name): $($signature.SignerCertificate.Subject)"
           }
 
-      - name: Remove temporary Apple keychain
-        if: always() && matrix.node_platform == 'darwin'
+      - name: Remove signing credentials
+        if: always()
         run: |
           if [[ -n "${GOJS_SIGNING_KEYCHAIN:-}" ]]; then
             security delete-keychain "${GOJS_SIGNING_KEYCHAIN}"
           fi
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+            rm -f "${APPLE_API_KEY_PATH}"
+          fi
+          # azure/login logs out of Azure in its own post step.
 
       - name: Stage artifacts and SHA256 checksums
-        if: success()
-        shell: bash
         env:
           ASSET_NAME: ${{ matrix.asset_name }}
           RUST_TARGET: ${{ matrix.rust_target }}
@@ -385,26 +418,28 @@ jobs:
           '
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-assets/*
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-${{ matrix.rust_target }}
+          name: desktop-${{ matrix.asset_name }}
           path: release-assets/*
           if-no-files-found: error
           retention-days: 14
 
   release:
+    name: Create draft release
     needs: [prepare, build]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
-      contents: write
+      contents: write # create the draft release and upload its assets
     steps:
       - name: Download all successful builds
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: desktop-*
           path: release-assets
